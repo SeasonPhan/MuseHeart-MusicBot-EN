@@ -1,4 +1,4 @@
-disnake==2.9.2
+git+https://github.com/DisnakeDev/disnake.git@96ed4459eff7f7b8a841f62e5d542d44dc721895
 python-dotenv
 user_agent
 requests>=2.31.0
@@ -8,12 +8,24 @@ tinymongo
 dnspython>=2.6.1
 psutil
 aiofiles
-disnake-jishaku
+git+https://github.com/zRitsu/jishaku.git@14d2dbd51d61382c687af8d8655f54f41674c0eb
 packaging
 aiosqlite
-yt-dlp>=2024.07.16
-tornado
+yt-dlp[default]>=2025.08.11
+tornado>=6.4.2
 emoji
-urllib3>=2.1.0
+urllib3>=2.5.0
 async-timeout
 cachetools
+regex
+syncedlyrics
+pylrc
+rapidfuzz
+nodriver==0.32
+undetected-chromedriver==3.5.5
+ruamel.yaml
+nest_asyncio
+setuptools>=70.0.0; python_version>='3.12'
+curl_cffi
+audioop-lts; python_version>='3.13'
+uvloop; sys_platform != 'win32'

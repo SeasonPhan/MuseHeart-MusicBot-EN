@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 import os
 import platform
-import re
 import shutil
 import subprocess
+import tempfile
 import time
 import zipfile
+from contextlib import suppress
 
 import requests
 
@@ -58,9 +59,8 @@ def download_file(url, filename):
 
 def validate_java(cmd: str, debug: bool = False):
     try:
-        java_info = subprocess.check_output(f'{cmd} -version', shell=True, stderr=subprocess.STDOUT)
-        java_version = re.search(r'\d+', java_info.decode().split("\r")[0]).group().replace('"', '')
-        if int(java_version.split('.')[0]) >= 17:
+        java_info = subprocess.check_output(f"{cmd} -version", stderr=subprocess.STDOUT, text=True, shell=True)
+        if int(java_info.splitlines()[0].split()[2].strip('"').split('.')[0]) >= 17:
             return cmd
     except Exception as e:
         if debug:
@@ -78,6 +78,8 @@ def run_lavalink(
     arch, osname = platform.architecture()
     jdk_platform = f"{platform.system()}-{arch}-{osname}"
 
+    tmp_dir = tempfile.gettempdir() if os.name == "nt" else "."
+
     if not (java_cmd := validate_java("java")):
 
         dirs = []
@@ -88,7 +90,7 @@ def run_lavalink(
             pass
 
         if os.name == "nt":
-            dirs.append(os.path.realpath(f"./.java/{jdk_platform}/bin/java"))
+            dirs.append(f"{tmp_dir}/.java/{jdk_platform}/bin/java")
             try:
                 shutil.rmtree("./.jabba")
             except:
@@ -103,12 +105,12 @@ def run_lavalink(
                     ]
                 )
                 try:
-                    shutil.rmtree("./.java")
+                    shutil.rmtree(f"{tmp_dir}/.java")
                 except:
                     pass
 
             else:
-                dirs.append(os.path.realpath(f"./.java/{jdk_platform}/bin/java"))
+                dirs.append(os.path.realpath(f"{tmp_dir}/.java/{jdk_platform}/bin/java"))
                 try:
                     shutil.rmtree("./.jabba")
                 except:
@@ -124,32 +126,55 @@ def run_lavalink(
             if os.name == "nt":
 
                 try:
-                    shutil.rmtree("./.java")
+                    shutil.rmtree(f"{tmp_dir}/.java")
                 except:
                     pass
 
-                if platform.architecture()[0] != "64bit":
-                    jdk_url = "https://download.bell-sw.com/java/21.0.3+12/bellsoft-jdk21.0.3+12-windows-i586-lite.zip"
+                if platform.architecture()[0] == "64bit":
+                    jdk_url = "https://download.bell-sw.com/java/17.0.13+12/bellsoft-jdk17.0.13+12-windows-amd64.zip"
                 else:
-                    jdk_url = "https://download.bell-sw.com/java/21.0.3+12/bellsoft-jdk21.0.3+12-windows-amd64-lite.zip"
+                    jdk_url = "https://download.bell-sw.com/java/17.0.13+12/bellsoft-jdk17.0.13+12-windows-i586.zip"
 
                 jdk_filename = "java.zip"
 
-                download_file(jdk_url, jdk_filename)
+                download_file(jdk_url, f"{tmp_dir}/{jdk_filename}")
 
-                with zipfile.ZipFile(jdk_filename, 'r') as zip_ref:
-                    zip_ref.extractall(f"./.java/{jdk_platform}")
+                os.makedirs(f"{tmp_dir}/.java/{jdk_platform}", exist_ok=True)
 
-                extracted_folder = os.path.join(f"./.java/{jdk_platform}", os.listdir(f"./.java/{jdk_platform}")[0])
+                with zipfile.ZipFile(os.path.normpath(f"{tmp_dir}/{jdk_filename}"), 'r') as zip_ref:
+                    try:
+                        zip_ref.extractall(f"{tmp_dir}/.java")
+                    except Exception as e:
+                        if isinstance(e, zipfile.BadZipFile):
+                            os.remove(f"{tmp_dir}/{jdk_filename}")
+                        raise e
+
+                extracted_folder = None
+
+                java_dirs = os.listdir(f"{tmp_dir}/.java")
+
+                for d in os.listdir(f"{tmp_dir}/.java"):
+                    if d == jdk_platform:
+                        continue
+                    if os.path.isfile(f"{tmp_dir}/.java/{d}/bin/java.exe"):
+                        extracted_folder = f"{tmp_dir}/.java/{d}"
+
+                if not extracted_folder:
+                    raise Exception(
+                    f"JDK not found in directory: {tmp_dir}/.java\n" + "\n".join(java_dirs)
+                    )
 
                 for item in os.listdir(extracted_folder):
                     item_path = os.path.join(extracted_folder, item)
-                    dest_path = os.path.join(f"./.java/{jdk_platform}", item)
+                    dest_path = os.path.join(f"{tmp_dir}/.java/{jdk_platform}", item)
                     os.rename(item_path, dest_path)
 
-                os.remove(jdk_filename)
+                with suppress(FileNotFoundError):
+                    os.remove(f"{tmp_dir}/{jdk_filename}")
+                with suppress(AttributeError):
+                    shutil.rmtree(extracted_folder)
 
-                java_cmd = os.path.realpath(f"./.java/{jdk_platform}/bin/java")
+                java_cmd = os.path.realpath(f"{tmp_dir}/.java/{jdk_platform}/bin/java")
 
             elif use_jabba:
 
@@ -166,10 +191,10 @@ def run_lavalink(
                 java_cmd = os.path.expanduser("./.jabba/jdk/zulu@1.17.0-0/bin/java")
 
             else:
-                if not os.path.isdir(f"./.java/{jdk_platform}"):
+                if not os.path.isdir(f"{tmp_dir}/.java/{jdk_platform}"):
 
                     try:
-                        shutil.rmtree("./.java")
+                        shutil.rmtree(f"{tmp_dir}/.java")
                     except:
                         pass
 
@@ -178,25 +203,25 @@ def run_lavalink(
                     else:
                         jdk_url = "https://download.bell-sw.com/java/21.0.3+12/bellsoft-jdk21.0.3+12-linux-amd64-lite.tar.gz"
 
-                    java_cmd = os.path.realpath(f"./.java/{jdk_platform}/bin/java")
+                    java_cmd = os.path.realpath(f"{tmp_dir}/.java/{jdk_platform}/bin/java")
 
                     jdk_filename = "java.tar.gz"
 
                     download_file(jdk_url, jdk_filename)
 
                     try:
-                        shutil.rmtree("./.java")
+                        shutil.rmtree(f"{tmp_dir}/.java")
                     except:
                         pass
 
-                    os.makedirs(f"./.java/{jdk_platform}")
+                    os.makedirs(f"{tmp_dir}/.java/{jdk_platform}")
 
-                    p = subprocess.Popen(["tar", "--strip-components=1", "-zxvf", "java.tar.gz", "-C", f"./.java/{jdk_platform}"])
+                    p = subprocess.Popen(["tar", "--strip-components=1", "-zxvf", "java.tar.gz", "-C", f"{tmp_dir}/.java/{jdk_platform}"])
                     p.wait()
                     os.remove(f"./{jdk_filename}")
 
                 else:
-                    java_cmd = os.path.realpath(f"./.java/{jdk_platform}/bin/java")
+                    java_cmd = os.path.realpath(f"{tmp_dir}/.java/{jdk_platform}/bin/java")
 
     clear_plugins = False
 
@@ -233,13 +258,17 @@ def run_lavalink(
 
     java_cmd += " -jar Lavalink.jar"
 
-    print(f"🌋 - Starting the Lavalink server (depending on the hosting, Lavalink may take a while to start "
-          f"which may cause failures in some connection attempts until it fully starts).\n{'-' * 30}")
+    print("🌋 - Starting the Lavalink server (depending on the hosting, Lavalink may take a while to start, "
+          "which may cause failures in some connection attempts until it fully starts).")
 
     lavalink_process = subprocess.Popen(java_cmd.split(), stdout=subprocess.DEVNULL)
 
     if lavalink_additional_sleep:
-        print(f"Waiting for {lavalink_additional_sleep} seconds...\n{'-' * 30}")
+        print(f"🕙 - Wait {lavalink_additional_sleep} seconds...")
         time.sleep(lavalink_additional_sleep)
 
     return lavalink_process
+
+if __name__ == "__main__":
+    run_lavalink()
+    time.sleep(1200)

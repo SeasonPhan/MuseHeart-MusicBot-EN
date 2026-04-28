@@ -26,9 +26,14 @@ import inspect
 import json
 import logging
 import os
-from typing import Any, Callable, Dict, Optional, Union, List
+import re
+import traceback
+from typing import Any, Callable, Dict, Optional, Union
 from urllib.parse import quote
 
+from rapidfuzz import fuzz
+
+from utils.music.youtube_trusted_session_generator import Browser
 from .backoff import ExponentialBackoff
 from .errors import *
 from .player import Player, Track, TrackPlaylist
@@ -36,6 +41,13 @@ from .websocket import WebSocket
 
 __log__ = logging.getLogger(__name__)
 
+yt_playlist_regex = re.compile(r"[?&]list=([^&]+)")
+yt_video_regex = re.compile(r"(?:v=|/)([0-9A-Za-z_-]{11})(?:[&?]|$)")
+spotify_regex = re.compile("https://open.spotify.com?.+(album|playlist|artist)/([a-zA-Z0-9]+)")
+deezer_regex = re.compile(r"(https?://)?(www\.)?deezer\.com/(?P<countrycode>[a-zA-Z]{2}/)?(?P<type>album|playlist|artist|profile)/(?P<identifier>[0-9]+)")
+soundcloud_regex = re.compile(r"https://soundcloud\.com/([^/]+)/sets/([^/]+)")
+
+exclude_tags = ["remix", "edit", "extend", "compilation", "mashup", "mixed"]
 
 class Node:
     """A WaveLink Node instance.
@@ -110,9 +122,16 @@ class Node:
         self.restarting = False
 
         self.stats = None
-        self.info = {"sourceManagers": []}
-        self.plugin_names: Optional[List] = None
+        self.info = {}
+
+        self.update_info()
+
         self.max_retries = kwargs.pop("max_retries", 1)
+        self.only_use_native_search_providers = kwargs.pop("only_use_native_search_providers", False)
+        self.search_providers = []
+        self.partial_providers = []
+        self.original_providers = []
+        self.native_sources = kwargs.pop("native_sources", set())
 
         self._closing = False
         self._is_connecting = False
@@ -122,6 +141,16 @@ class Node:
 
     def __repr__(self):
         return f'{self.identifier} | {self.region} | (Shard: {self.shard_id})'
+
+    def update_info(self, data: dict = None):
+        if not data:
+            self.info = {"sourceManagers": [], "plugins": {}}
+        else:
+            self.info = data
+            if (version:=data.get("check_version")):
+                self.version = version
+            if self.version > 3:
+                self.info["plugins"] = {d["name"]: d["version"] for d in self.info["plugins"]}
 
     @property
     def is_available(self) -> bool:
@@ -173,8 +202,7 @@ class Node:
         max_retries = int(self.max_retries)
 
         if (info:=kwargs.get("info")):
-            self.version = info["check_version"]
-            self.info = info
+            self.update_info(info)
 
         else:
             print(f"📶 - {self._client.bot.user} - Starting music server: {self.identifier}")
@@ -189,6 +217,7 @@ class Node:
                         else:
                             self.version = 3
                             self.info["sourceManagers"] = ["youtube", "soundcloud", "http"]
+                            return
                         break
                 except Exception as e:
                     if retries >= max_retries:
@@ -205,11 +234,6 @@ class Node:
                     retries += 1
                     await asyncio.sleep(backoff)
                     continue
-
-        if self.version < 4:
-            self.plugin_names = set()
-        else:
-            self.plugin_names = set([p["name"] for p in self.info["plugins"]])
 
         if not self._websocket:
 
@@ -233,6 +257,31 @@ class Node:
         self._is_connecting = False
 
         __log__.info(f'NODE | {self.identifier} connected:: {self.__repr__()}')
+
+    async def refresh_potoken(self, sandbox=True, browser_executable_path=None):
+
+        browser = Browser()
+
+        try:
+            ytid = self._client.bot.config["POTOKEN_YTID"]
+        except:
+            ytid = "jNQXAC9IVRw"
+
+        try:
+            await browser.start(sandbox=sandbox, browser_executable_path=browser_executable_path, ytid=ytid)
+        except Exception as e:
+            if not browser.data:
+                raise e
+            else:
+                traceback.print_exc()
+
+        async with self.session.post(url=f"{self.rest_uri}/youtube",
+            json={
+              "poToken": browser.data["po_token"],
+              "visitorData": browser.data["visitor_data"]
+            }, headers=self._websocket.headers
+        ) as r:
+            return f"{r.status}: {await r.text()}"
 
     async def update_player(self, guild_id: int, data: dict, replace: bool = False):
 
@@ -273,7 +322,7 @@ class Node:
 
         raise WavelinkException(f"{self.identifier}: UpdatePlayer Failed = {resp.status}: {resp_data}")
 
-    async def get_tracks(self, query: str, *, retry_on_failure: bool = True, **kwargs) -> Union[list, TrackPlaylist, None]:
+    async def get_tracks(self, query: str, *, retry_on_failure: bool = False, **kwargs) -> Union[list, TrackPlaylist, None]:
         """|coro|
 
         Search for and return a list of Tracks for the given query.
@@ -296,99 +345,205 @@ class Node:
         """
         backoff = ExponentialBackoff(base=1)
 
-        base_uri = f'{self.rest_uri}/v4' if self.version == 4 else self.rest_uri
+        ytid = None
+        playlist_id = None
 
-        for attempt in range(2):
+        if yt_id:=(yt_playlist_regex.search(query)):
+            yt_id = yt_id.group(1)
+            playlist_id = yt_id
+            if yt_id.startswith("RD"):
+                cache_key = None
+            else:
+                cache_key = f"youtube:{yt_id}"
+            try:
+                ytid = yt_video_regex.search(query).group(1)
+            except:
+                pass
 
-            async with self.session.get(f"{base_uri}/loadtracks?identifier={quote(query)}", headers={'Authorization': self.password}) as resp:
+        elif sp_match:=spotify_regex.match(query):
+            url_type, url_id = sp_match.groups()
+            cache_key = f"spotify:{url_type}:{url_id}"
 
-                if resp.status != 200 and retry_on_failure:
-                    retry = backoff.delay()
+        elif dz_match:=deezer_regex.match(query):
+            url_type, url_id = dz_match.groups()[-2:]
+            cache_key = f"deezer:{url_type}:{url_id}"
 
-                    __log__.info(f'REST | {self.identifier} | Status code ({resp.status}) while retrieving tracks. '
-                                 f'Attempt {attempt} of 5, retrying in {retry} seconds.')
+        elif sc_match:=soundcloud_regex.match(query):
+            user_name, playlist_id = sc_match.groups()
+            cache_key = f"soundcloud:{user_name}:{playlist_id}"
 
-                    await asyncio.sleep(retry)
-                    continue
+        else:
+            cache_key = None
 
-                elif not resp.status == 200 and not retry_on_failure:
-                    __log__.info(f'REST | {self.identifier} | Status code ({resp.status}) while retrieving tracks. Not retrying.')
-                    return
+        if not (data:=self._client.bot.pool.playlist_cache.get(cache_key)):
 
-                try:
-                    data = await resp.json()
-                except Exception as e:
-                    raise WavelinkException(f"{self.identifier}: Failed to parse json result. | Error: {repr(e)}")
+            base_uri = f'{self.rest_uri}/v4' if self.version == 4 else self.rest_uri
 
-                if isinstance(data, list):
-                    return data
+            for attempt in range(2):
 
-                loadtype = data.get('loadType')
+                async with self.session.get(f"{base_uri}/loadtracks?identifier={quote(query)}", headers={'Authorization': self.password}) as resp:
 
-                try:
-                    data = data.pop('data')
-                except KeyError:
-                    pass
+                    if resp.status != 200:
 
-                if not loadtype:
-                    raise WavelinkException('There was an error while trying to load this track.')
+                        if not retry_on_failure:
+                            __log__.info(f'REST | {self.identifier} | Status code ({resp.status}) while retrieving tracks. Not retrying.')
+                            return
 
-                if loadtype == 'NO_MATCHES':
-                    __log__.info(f'REST | {self.identifier} | No tracks with query:: <{query}> found.')
-                    return []
+                        retry = backoff.delay()
 
-                if loadtype in ('LOAD_FAILED', 'error'):
+                        __log__.info(f'REST | {self.identifier} | Status code ({resp.status}) while retrieving tracks. '
+                                     f'Attempt {attempt} of 5, retrying in {retry} seconds.')
 
-                    if self.version == 4:
-                        data['exception'] = data
+                        await asyncio.sleep(retry)
+                        continue
 
                     try:
-                        error = f"There was an error of severity '{data['exception']['severity']}' while loading tracks.\n\n{data['exception']['message']}"
-                    except KeyError:
-                        error = f"There was an error of severity '{data['exception']['severity']}:\n{data['exception']['error']}"
-                    e = TrackLoadError(error=error, node=self, data=data)
-                    if not e.message:
-                        e.message = data['exception']['error']
-                    raise e
+                        data = await resp.json()
+                    except Exception as e:
+                        raise WavelinkException(f"{self.identifier}: Failed to parse json result. | Error: {repr(e)}")
 
-                try:
-                    tracks = data.get('tracks')
-                except AttributeError:
-                    tracks = data
+                    if isinstance(data, list):
+                        return data
 
-                if loadtype == 'track':
-                    tracks = [data]
+                    break
 
-                if not tracks:
-                    __log__.info(f'REST | {self.identifier} | No tracks with query:: <{query}> found.')
-                    raise TrackNotFound(f"{self.identifier}: Track not found... | {query}")
+        loadtype = data.get('loadType')
 
-                encoded_name = "track" if self.version == 3 else "encoded"
+        try:
+            new_data = data.get('data')
+        except KeyError:
+            new_data = data
 
-                if loadtype in ('PLAYLIST_LOADED', 'playlist'):
-                    try:
-                        data['playlistInfo'] = data.pop('info')
-                    except KeyError:
-                        pass
-                    playlist_cls = kwargs.pop('playlist_cls', TrackPlaylist)
-                    if query.startswith("https://music.youtube.com/"):
-                        query = query.replace("https://www.youtube.com/", "https://music.youtube.com/")
+        if not loadtype:
+            raise WavelinkException('There was an error while trying to load this track.')
 
+        if loadtype == 'NO_MATCHES':
+            __log__.info(f'REST | {self.identifier} | No tracks with query:: <{query}> found.')
+            return []
+
+        if loadtype in ('LOAD_FAILED', 'error'):
+
+            if self.version == 4:
+                new_data['exception'] = new_data
+
+            try:
+                error = f"There was an error of severity '{new_data['exception']['severity']}' while loading tracks.\n\n{new_data['exception']['message']}"
+            except KeyError:
+                error = f"There was an error of severity '{new_data['exception']['severity']}:\n{new_data['exception']['error']}"
+            e = TrackLoadError(error=error, node=self, data=new_data)
+
+            if not e.message:
+                e.message = new_data['exception']['error']
+
+            if ytid:
+
+                if e.message.endswith("The playlist does not exist."):
+                    return await self.get_tracks(query=f"https://www.youtube.com/watch?v={ytid}",
+                                                 retry_on_failure=retry_on_failure, **kwargs)
+
+                if e.message.endswith("This video cannot be loaded.") and playlist_id:
+                    return await self.get_tracks(query=f"https://www.youtube.com/watch?v={ytid}",
+                                                 retry_on_failure=retry_on_failure, **kwargs)
+
+            raise e
+
+        try:
+            tracks = new_data.get('tracks')
+        except AttributeError:
+            tracks = new_data
+
+        if loadtype == 'track':
+            tracks = [new_data]
+
+        if not tracks:
+            __log__.info(f'REST | {self.identifier} | No tracks with query:: <{query}> found.')
+            raise TrackNotFound(f"{self.identifier}: Track not found... | {query}")
+
+        encoded_name = "track" if self.version == 3 else "encoded"
+
+        if loadtype in ('PLAYLIST_LOADED', 'playlist'):
+
+            try:
+                new_data['playlistInfo'] = new_data.pop('info')
+            except KeyError:
+                pass
+
+            playlist_cls = kwargs.pop('playlist_cls', TrackPlaylist)
+
+            if cache_key:
+
+                if not ytid:
+                    self._client.bot.pool.playlist_cache[cache_key] = data
+
+                else:
+
+                    index = None
+
+                    for n, t in enumerate(new_data['tracks']):
+                        if t['info']['identifier'] == ytid:
+                            index = n
+
+                    if index is None:
                         try:
-                            if data["playlistInfo"]["name"].startswith("Album - "):
-                                data["playlistInfo"]["name"] = data["playlistInfo"]["name"][8:]
-                                data["pluginInfo"]["type"] = "album"
-                                data["pluginInfo"]["albumName"] = data["playlistInfo"]["name"]
-                                data["pluginInfo"]["albumUrl"] = query
+                            del self._client.bot.pool.playlist_cache[cache_key]
                         except KeyError:
                             pass
-                    return playlist_cls(data=data, url=query, encoded_name=encoded_name, pluginInfo=data.pop("pluginInfo", {}), **kwargs)
+                        return await self.get_tracks(query=f"https://www.youtube.com/playlist?list={playlist_id}", retry_on_failure=retry_on_failure, playlist_cls=playlist_cls, **kwargs)
 
-                track_cls = kwargs.pop('track_cls', Track)
+                    self._client.bot.pool.playlist_cache[cache_key] = data
 
-                tracks = [track_cls(id_=track[encoded_name], info=track['info'], pluginInfo=track.get("pluginInfo", {}), **kwargs) for track in tracks]
+                    if index > 0:
+                        new_data['tracks'] = new_data['tracks'][index:] + new_data['tracks'][:index]
 
-                return tracks
+            if query.startswith("https://music.youtube.com/"):
+                query = query.replace("https://www.youtube.com/", "https://music.youtube.com/")
+
+                try:
+                    if new_data["playlistInfo"]["name"].startswith("Album - "):
+                        new_data["playlistInfo"]["name"] = new_data["playlistInfo"]["name"][8:]
+                        new_data["pluginInfo"]["type"] = "album"
+                        new_data["pluginInfo"]["albumName"] = new_data["playlistInfo"]["name"]
+                        new_data["pluginInfo"]["albumUrl"] = query
+                except KeyError:
+                    pass
+            return playlist_cls(data=new_data, url=query, encoded_name=encoded_name, pluginInfo=new_data.pop("pluginInfo", {}),
+                                **kwargs)
+
+        track_cls = kwargs.pop('track_cls', Track)
+
+        if (check_title:=kwargs.get("check_title")) and len(tracks) > 1:
+
+            tracks_ = [
+                track_cls(
+                    id_=track[encoded_name], info=track['info'],
+                    pluginInfo=track.get("pluginInfo", {}), **kwargs
+                ) for track in tracks
+            ]
+
+            search = "".join(query.split(":", 1)[1]).strip().lower()
+
+            if tracks_[0].info['sourceName'] in ("youtube", "soundcloud"):
+
+                def chk(t):
+                    if t.author.endswith(" - topic") and not t.author.endswith(
+                            "Release - topic") and not t.title.startswith(t.author[:-8]):
+                        return f"{t.author} - {t.title}".lower()
+                    else:
+                        return t.title.lower()
+
+                tracks_ = [t for t in tracks_ if fuzz.token_sort_ratio(chk(t), search) >= check_title]
+
+            else:
+                tracks_ = [t for t in tracks_ if fuzz.token_sort_ratio(f"{t.author} - {t.title}".lower(), search) >= check_title]
+
+            if not any(tag for tag in exclude_tags if tag in search.lower()):
+                return [t for t in tracks_ if not any(tag for tag in exclude_tags if tag in t.title.lower())]
+
+            return tracks_
+
+        return [
+            track_cls(id_=track[encoded_name], info=track['info'], pluginInfo=track.get("pluginInfo", {}), **kwargs) for
+            track in tracks]
 
         __log__.warning(f'REST | {self.identifier} | Failure to load tracks after 5 attempts.')
 
@@ -430,7 +585,17 @@ class Node:
         if self.version < 4:
             return
 
-        return "java-lyrics-plugin" in self.plugin_names
+        try:
+            return bool(self.info["plugins"]["lyrics"])
+        except KeyError:
+            pass
+
+        try:
+            return bool(self.info["plugins"]["java-lyrics-plugin"])
+        except KeyError:
+            pass
+
+        return False
 
     async def fetch_ytm_lyrics(self, ytid: str):
 
@@ -438,9 +603,8 @@ class Node:
             raise Exception(f"Lyrics plugin not available on Node: {self.identifier}")
 
         async with self.session.get(f"{self.rest_uri}/v4/lyrics/{ytid}", headers=self.headers) as r:
-            if r.status != 200:
-                print(f"Lyrics fetching failed: {r.status} - {await r.text()}")
-                return
+            if r.status not in (200, 404):
+                r.raise_for_status()
             return await r.json()
 
     def get_player(self, guild_id: int) -> Optional[Player]:

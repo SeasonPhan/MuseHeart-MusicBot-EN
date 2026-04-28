@@ -18,7 +18,7 @@ from disnake.ext import commands
 from utils.db import DBModel
 from utils.music.converters import perms_translations, time_format
 from utils.music.errors import GenericError, NoVoice
-from utils.music.interactions import SkinEditorMenu
+from utils.music.interactions import SkinEditorMenu, EmbedPaginatorInteraction, ButtonInteraction
 from utils.music.models import LavalinkPlayer
 from utils.others import send_idle_embed, CustomContext, select_bot_pool, pool_command, CommandArgparse, update_inter
 
@@ -50,7 +50,7 @@ class SkinSelector(disnake.ui.View):
 
     def __init__(
             self,
-            ctx: Union[disnake.AppCmdInter, CustomContext],
+            ctx: Union[disnake.ApplicationCommandInteraction, CustomContext],
             embed: disnake.Embed,
             select_opts: list,
             static_select_opts: list,
@@ -168,7 +168,7 @@ class SkinSelector(disnake.ui.View):
 
 class PlayerSettings(disnake.ui.View):
 
-    def __init__(self, ctx: Union[disnake.AppCmdInter, CustomContext], bot: BotCore, data: dict):
+    def __init__(self, ctx: Union[disnake.ApplicationCommandInteraction, CustomContext], bot: BotCore, data: dict):
         super().__init__()
         self.ctx = ctx
         self.bot = bot
@@ -313,9 +313,10 @@ class MusicSettings(commands.Cog):
 
     @commands.slash_command(
         description=f"{desc_prefix}Change some default player settings.",
-        default_member_permissions=disnake.Permissions(manage_guild=True), dm_permission=False
+        default_member_permissions=disnake.Permissions(manage_guild=True)
     )
-    async def player_settings(self, interaction: disnake.AppCmdInter):
+    @commands.contexts(guild=True)
+    async def player_settings(self, interaction: disnake.ApplicationCommandInteraction):
 
         inter, bot = await select_bot_pool(interaction, return_new=True)
 
@@ -371,12 +372,12 @@ class MusicSettings(commands.Cog):
 
     @commands.slash_command(
         description=f"{desc_prefix}Create/choose a dedicated channel for requesting music and pinning the Player.",
-        default_member_permissions=disnake.Permissions(manage_guild=True), cooldown=setup_cd, max_concurrency=setup_mc,
-        dm_permission=False
+        default_member_permissions=disnake.Permissions(manage_guild=True), cooldown=setup_cd, max_concurrency=setup_mc
     )
+    @commands.contexts(guild=True)
     async def setup(
             self,
-            interaction: disnake.AppCmdInter,
+            interaction: disnake.ApplicationCommandInteraction,
             target: Union[disnake.TextChannel, disnake.VoiceChannel, disnake.ForumChannel, disnake.StageChannel] = commands.Param(
                 name="channel", default=None, description="Select an existing channel"
             ),
@@ -866,6 +867,7 @@ class MusicSettings(commands.Cog):
             player.static = True
             player.text_channel = channel
             player.setup_hints()
+            player.setup_features()
             await player.invoke_np(force=True)
 
         elif not message or message.channel.id != channel.id:
@@ -927,12 +929,12 @@ class MusicSettings(commands.Cog):
 
     @commands.slash_command(
         description=f"{desc_prefix}Reset the settings related to the music request channel (song request).",
-        default_member_permissions=disnake.Permissions(manage_guild=True), cooldown=setup_cd, max_concurrency=setup_mc,
-        dm_permission=False
+        default_member_permissions=disnake.Permissions(manage_guild=True), cooldown=setup_cd, max_concurrency=setup_mc
     )
+    @commands.contexts(guild=True)
     async def reset(
             self,
-            interaction: disnake.AppCmdInter,
+            interaction: disnake.ApplicationCommandInteraction,
             delete_channel: str = commands.Param(
                 name="delete_channel",
                 description="delete the Player Controller channel", default=None, choices=["yes", "no"]
@@ -962,7 +964,7 @@ class MusicSettings(commands.Cog):
             channel = None
 
         if not channel or channel.guild.id != inter.guild_id:
-            raise GenericError(f"**No music request channels are configured (or the channel has been deleted).**")
+            raise GenericError(f"**There are no music request channels configured on the bot {bot.user.mention} (or the channel was deleted).**")
 
         try:
             if isinstance(channel.parent, disnake.ForumChannel):
@@ -996,7 +998,7 @@ class MusicSettings(commands.Cog):
             "channel": None
         })
 
-        await self.bot.update_data(guild.id, guild_data, db_name=DBModel.guilds)
+        await bot.update_data(guild.id, guild_data, db_name=DBModel.guilds)
 
         try:
             func = inter.edit_original_message
@@ -1004,7 +1006,10 @@ class MusicSettings(commands.Cog):
             try:
                 func = inter.response.edit_message
             except AttributeError:
-                func = inter.send
+                try:
+                    func = inter.store_message.edit
+                except AttributeError:
+                    func = inter.send
 
         await func(
             embed=disnake.Embed(
@@ -1054,9 +1059,10 @@ class MusicSettings(commands.Cog):
         await self.add_dj_role.callback(self=self, interaction=ctx, role=role)
 
     @commands.slash_command(
-        description=f"{desc_prefix}Add a role to server's DJ list.", dm_permission=False,
+        description=f"{desc_prefix}Add a role to server's DJ list.",
         default_member_permissions=disnake.Permissions(manage_guild=True), cooldown=djrole_cd, max_concurrency=djrole_mc
     )
+    @commands.contexts(guild=True)
     async def add_dj_role(
             self,
             interaction: disnake.ApplicationCommandInteraction,
@@ -1091,9 +1097,10 @@ class MusicSettings(commands.Cog):
         await self.remove_dj_role.callback(self=self, interaction=ctx, role=role)
 
     @commands.slash_command(
-        description=f"{desc_prefix}Remove a role from server's DJ list.", dm_permission=False,
+        description=f"{desc_prefix}Remove a role from server's DJ list.",
         default_member_permissions=disnake.Permissions(manage_guild=True), cooldown=djrole_cd, max_concurrency=djrole_mc
     )
+    @commands.contexts(guild=True)
     async def remove_dj_role(
             self,
             interaction: disnake.ApplicationCommandInteraction,
@@ -1138,9 +1145,10 @@ class MusicSettings(commands.Cog):
 
     @commands.slash_command(
         description=f"{desc_prefix}Change Player skin.", cooldown=skin_cd, max_concurrency=skin_mc,
-        default_member_permissions=disnake.Permissions(manage_guild=True), dm_permission=False
+        default_member_permissions=disnake.Permissions(manage_guild=True)
     )
-    async def change_skin(self, interaction: disnake.AppCmdInter):
+    @commands.contexts(guild=True)
+    async def change_skin(self, interaction: disnake.ApplicationCommandInteraction):
 
         inter, bot = await select_bot_pool(interaction, return_new=True)
 
@@ -1524,89 +1532,114 @@ class MusicSettings(commands.Cog):
 
     @commands.cooldown(1, 5, commands.BucketType.user)
     @commands.slash_command(
-        description=f"{desc_prefix}View information about the music servers (lavalink servers).", dm_permission=False
+        description=f"{desc_prefix}View information about the music servers (lavalink servers)."
     )
-    async def nodeinfo(self, interaction: disnake.AppCmdInter):
+    @commands.contexts(guild=True)
+    async def nodeinfo(self, interaction: disnake.ApplicationCommandInteraction):
 
         inter, bot = await select_bot_pool(interaction, return_new=True)
 
         if not bot:
             return
 
-        guild = bot.get_guild(inter.guild_id) or inter.guild
+        guild = bot.get_guild(inter.guild_id)
 
-        em = disnake.Embed(color=bot.get_color(guild.me), title="Music servers:")
+        color = bot.get_color(guild.me if guild else None)
+
+        embeds = []
 
         if not bot.music.nodes:
-            em.description = "**There are no servers.**"
-            await inter.send(embed=em)
-            return
+            raise GenericError("**There are no music servers.**")
 
         failed_nodes = set()
 
+        available_nodes = []
+
         for identifier, node in bot.music.nodes.items():
-
-            if not node.available: continue
-
-            try:
-                current_player = node.players[inter.guild_id]
-            except KeyError:
-                current_player = None
 
             if not node.stats or not node.is_available:
                 failed_nodes.add(node.identifier)
-                continue
+            else:
+                available_nodes.append([identifier, node])
 
-            txt = f"Region: `{node.region.title()}`\n"
 
-            used = humanize.naturalsize(node.stats.memory_used)
-            total = humanize.naturalsize(node.stats.memory_allocated)
-            free = humanize.naturalsize(node.stats.memory_free)
-            cpu_cores = node.stats.cpu_cores
-            cpu_usage = f"{node.stats.lavalink_load * 100:.2f}"
-            started = node.stats.players
+        for page in disnake.utils.as_chunks(available_nodes, 6):
 
-            txt += f'RAM: `{used}/{free}`\n' \
-                   f'RAM Total: `{total}`\n' \
-                   f'CPU Cores: `{cpu_cores}`\n' \
-                   f'CPU Usage: `{cpu_usage}%`\n' \
-                   f'Lavalink version: `v{node.version}`\n' \
-                   f'Uptime: <t:{int((disnake.utils.utcnow() - datetime.timedelta(milliseconds=node.stats.uptime)).timestamp())}:R>\n'
+            em = disnake.Embed(color=color, title="Music servers:")
 
-            if started:
-                txt += "Players: "
-                players = node.stats.playing_players
-                idle = started - players
-                if players:
-                    txt += f'`[▶️{players}]`' + (" " if idle else "")
-                if idle:
-                    txt += f'`[💤{idle}]`'
+            for identifier, node in page:
 
-                txt += "\n"
+                try:
+                    current_player = node.players[inter.guild_id]
+                except KeyError:
+                    current_player = None
 
-            if node.website:
-                txt += f'[`Server website`]({node.website})\n'
+                txt = f"Region: `{node.region.title()}`\n"
 
-            status = "🌟" if current_player else "✅"
+                used = humanize.naturalsize(node.stats.memory_used)
+                total = humanize.naturalsize(node.stats.memory_allocated)
+                free = humanize.naturalsize(node.stats.memory_free)
+                cpu_cores = node.stats.cpu_cores
+                cpu_usage = f"{node.stats.lavalink_load * 100:.2f}"
+                started = node.stats.players
 
-            em.add_field(name=f'**{identifier}** `{status}`', value=txt)
+                txt += f'RAM: `{used}/{free}`\n' \
+                       f'RAM Total: `{total}`\n' \
+                       f'CPU Cores: `{cpu_cores}`\n' \
+                       f'CPU Usage: `{cpu_usage}%`\n' \
+                       f'Lavalink version: `v{node.version}`\n' \
+                       f'Uptime: <t:{int((disnake.utils.utcnow() - datetime.timedelta(milliseconds=node.stats.uptime)).timestamp())}:R>\n'
+
+                if started:
+                    txt += "Players: "
+                    players = node.stats.playing_players
+                    idle = started - players
+                    if players:
+                        txt += f'`[▶️{players}]`' + (" " if idle else "")
+                    if idle:
+                        txt += f'`[💤{idle}]`'
+
+                    txt += "\n"
+
+                if node.website:
+                    txt += f'[`Server website`]({node.website})\n'
+
+                status = "🌟" if current_player else "✅"
+
+                em.add_field(name=f'**{identifier}** `{status}`', value=txt)
+
             em.set_footer(text=f"{bot.user} - [{bot.user.id}]", icon_url=bot.user.display_avatar.with_format("png").url)
 
-        embeds = [em]
+            if failed_nodes:
+                em.add_field(name="**Servers that failed** `❌`",
+                             value=f"```ansi\n\u001b[31;1m" + "\n".join(failed_nodes) + "\u001b[0m\n```", inline=False)
 
-        if failed_nodes:
-            embeds.append(
-                disnake.Embed(
-                    title="**Servers that failed** `❌`",
-                    description=f"```ansi\n[31;1m" + "\n".join(failed_nodes) + "[0m\n```",
-                    color=bot.get_color(guild.me)
-                )
-            )
+            embeds.append(em)
 
-        if isinstance(inter, disnake.MessageInteraction):
-            await inter.response.edit_message(embeds=embeds, view=None)
+        kwargs = {}
+
+        msg = None
+
+        if len(embeds) > 1:
+            kwargs["view"] = EmbedPaginatorInteraction(inter.author, embeds)
+
+        if isinstance(inter, CustomContext):
+            msg = await inter.send(embed=embeds[0], **kwargs)
+        elif isinstance(inter, disnake.MessageInteraction):
+            await inter.response.edit_message(embed=embeds[0], **kwargs)
         else:
-            await inter.send(embeds=embeds, ephemeral=True)
+            msg = await inter.send(embed=embeds[0], **kwargs)
+
+        if kwargs.get("view"):
+            await kwargs["view"].wait()
+            for c in kwargs["view"].children:
+                c.disabled = True
+            if kwargs["view"].inter:
+                await kwargs["view"].inter.response.edit_message(view=kwargs["view"])
+            elif msg or isinstance(inter, CustomContext):
+                await msg.edit(view=kwargs["view"])
+            else:
+                await inter.edit_original_message(view=kwargs["view"])
 
     customskin_cd = commands.CooldownMapping.from_cooldown(1, 10, commands.BucketType.guild)
     customskin__mc =commands.MaxConcurrency(1, per=commands.BucketType.guild, wait=False)
@@ -1620,8 +1653,9 @@ class MusicSettings(commands.Cog):
 
     @commands.slash_command(cooldown=customskin_cd, max_concurrency=customskin__mc,
                             description=f"{desc_prefix}Create your own skins/templates for the Player.",
-                            default_member_permissions=disnake.Permissions(administrator=True), dm_permission=False)
-    async def custom_skin(self, inter: disnake.AppCmdInter):
+                            default_member_permissions=disnake.Permissions(administrator=True))
+    @commands.contexts(guild=True)
+    async def custom_skin(self, inter: disnake.ApplicationCommandInteraction):
 
         inter, bot = await select_bot_pool(inter, return_new=True)
 
@@ -1693,6 +1727,90 @@ class RPCCog(commands.Cog):
 
     def __init__(self, bot: BotCore):
         self.bot = bot
+        self.voice_regions= {
+            "brazil": "🇧🇷",
+            "hongkong": "🇭🇰",
+            "india": "🇮🇳",
+            "japan": "🇯🇵",
+            "rotterdam": "🇳🇱",
+            "russia": "🇷🇺",
+            "singapore": "🇸🇬",
+            "southafrica": "🇿🇦",
+            "sydney": "🇦🇺",
+            "us-central": "🇺🇸",
+            "us-east": "🇺🇸",
+            "us-west": "🇺🇸",
+            "us-south": "🇺🇸",
+        }
+
+    @commands.max_concurrency(1, commands.BucketType.guild)
+    @commands.cooldown(1,  120, commands.BucketType.guild)
+    @commands.has_permissions(manage_channels=True)
+    @commands.command(
+        description="Change the region of a stage channel"
+    )
+    async def stageregion(self, ctx: CustomContext):
+
+        if not isinstance(ctx.author.voice.channel, disnake.StageChannel):
+            ctx.command.reset_cooldown(ctx)
+            raise GenericError("**You must be connected to a stage channel to use this command.**")
+
+        bot: Optional[BotCore] = None
+
+        for b in self.bot.pool.get_guild_bots(ctx.guild_id):
+            if not (bot_member:= ctx.guild.get_member(b.user.id)):
+                continue
+            if ctx.author.voice.channel.permissions_for(bot_member).manage_channels:
+                bot = b
+                break
+
+        if not bot:
+            ctx.command.reset_cooldown(ctx)
+            raise GenericError("**There are no bots with permission to manage channels on the server.**")
+
+        vc = ctx.author.voice.channel
+
+        view = ButtonInteraction(
+            user=ctx.author,
+            buttons=[disnake.ui.Button(label=k, custom_id=k, emoji=v) for k, v in self.voice_regions.items() if k != vc.rtc_region]
+        )
+
+        color = self.bot.get_color(ctx.guild.me)
+
+        msg = await ctx.send(
+            embed=disnake.Embed(description="### Select a region below:", color=color),
+            view=view,
+        )
+
+        await view.wait()
+
+        if view.inter:
+            ctx.inter = view.inter
+
+        try:
+            func = view.inter.edit_original_response
+            await view.inter.response.defer()
+        except AttributeError:
+            func = msg.edit
+
+        if not view.selected:
+            await func(
+                embed=disnake.Embed(
+                    color=color,
+                    description="### Operation cancelled!"
+                ), view=None
+            )
+            return
+
+        await vc.edit(rtc_region=view.selected, reason=f"Region changed by: {ctx.author.name} [{ctx.author.id}]")
+
+        await func(
+            embed=disnake.Embed(
+                color=color,
+                description=f"**The region of the channel {vc.mention} was successfully changed to:\n"
+                            f"{view.selected}**"
+            ), view=None
+        )
 
     rpc_cd = commands.CooldownMapping.from_cooldown(1, 30, commands.BucketType.user)
 
@@ -1703,10 +1821,10 @@ class RPCCog(commands.Cog):
         await self.rich_presence.callback(self=self, inter=ctx)
 
     @commands.slash_command(
-        description=f"{desc_prefix}Activate/Disable the Rich-Presence System in your status.", cooldown=rpc_cd,
-        dm_permission=False
+        description=f"{desc_prefix}Activate/Disable the Rich-Presence System in your status.", cooldown=rpc_cd
     )
-    async def rich_presence(self, inter: disnake.AppCmdInter):
+    @commands.contexts(guild=True)
+    async def rich_presence(self, inter: disnake.ApplicationCommandInteraction):
 
         if not self.bot.config["ENABLE_RPC_COMMAND"] and not any([await b.is_owner(inter.author) for b in self.bot.pool.get_guild_bots(inter.guild_id)]):
             raise GenericError("**This command is disabled in my settings...**\n"

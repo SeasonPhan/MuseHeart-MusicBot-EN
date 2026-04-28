@@ -76,9 +76,9 @@ class DefaultProgressbarSkin:
             txt += f"\n> -# ✋ **⠂** <@{player.current.requester}>"
         else:
             try:
-                mode = f" [`Recomendada`]({player.current.info['extra']['related']['uri']})"
+                mode = f" [`Recommended`]({player.current.info['extra']['related']['uri']})"
             except:
-                mode = "`Recomendada`"
+                mode = "`Recommended`"
             txt += f"\n> -# 👍 **⠂** {mode}"
 
         if player.current.track_loops:
@@ -90,7 +90,7 @@ class DefaultProgressbarSkin:
                 m = 'Current Song'
             else:
                 e = '🔁'
-                m = 'Fila'
+                m = 'Queue'
             txt += f"\n> -# {e} **⠂** `Repetition: {m}`"
 
         if player.current.album_name:
@@ -163,17 +163,12 @@ class DefaultProgressbarSkin:
             disnake.ui.Select(
                 placeholder="More options:",
                 custom_id="musicplayer_dropdown_inter",
-                min_values=0, max_values=1,
+                min_values=0, max_values=1, required = False,
                 options=[
                     disnake.SelectOption(
                         label="Add Song", emoji="<:add_music:588172015760965654>",
                         value=PlayerControls.add_song,
                         description="Add a song/playlist to the queue."
-                    ),
-                    disnake.SelectOption(
-                        label="Add Favorite to Queue", emoji="⭐",
-                        value=PlayerControls.enqueue_fav,
-                        description="Add one of your favorites to the queue."
                     ),
                     disnake.SelectOption(
                         label="Add to Your Favorites", emoji="💗",
@@ -216,7 +211,12 @@ class DefaultProgressbarSkin:
                         description="Automatically add music when the queue is empty."
                     ),
                     disnake.SelectOption(
-                        label= ("Disable" if player.restrict_mode else "Enable") + " restrict mode", emoji="🔐",
+                        label="Last.fm scrobble", emoji="<:Lastfm:1278883704097341541>",
+                        value=PlayerControls.lastfm_scrobble,
+                        description="Enable/disable scrobbling/logging of songs on your last.fm account."
+                    ),
+                    disnake.SelectOption(
+                        label=("Disable" if player.restrict_mode else "Enable") + " restricted mode", emoji="🔐",
                         value=PlayerControls.restrict_mode,
                         description="Only DJ's/Staff can use restricted commands."
                     ),
@@ -252,7 +252,7 @@ class DefaultProgressbarSkin:
                 )
             )
 
-        if not player.static and not player.has_thread:
+        if not player.has_thread:
             data["components"][5].options.append(
                 disnake.SelectOption(
                     label="Song-Request Thread", emoji="💬",

@@ -51,6 +51,13 @@ db_models = {
     }
 }
 
+scrobble_model = {
+    DBModel.users: {
+        "ver": 1.0,
+        "tracks": []
+    }
+}
+
 global_db_models = {
     DBModel.users: {
         "ver": 1.6,
@@ -164,18 +171,18 @@ class LocalDatabase(BaseDB):
 
         id_ = str(id_)
 
-        if (cached_result := self.cache.get((db_name, collection, frozenset({"_id": id_}.items())))) is not None:
+        if (cached_result := self.cache.get(f"{collection}:{db_name}:{id_}")) is not None:
             return cached_result
 
         data = self._connect[collection][db_name].find_one({"_id": id_})
 
         if not data:
-            data = default_model[db_name].copy()
+            data = deepcopy(default_model[db_name])
             data["_id"] = str(id_)
             self._connect[collection][db_name].insert_one(data)
 
         elif data["ver"] != default_model[db_name]["ver"]:
-            data = update_values(default_model[db_name].copy(), data)
+            data = update_values(deepcopy(default_model[db_name]), data)
             data["ver"] = default_model[db_name]["ver"]
 
             await self.update_data(id_, data, db_name=db_name, collection=collection)
@@ -194,7 +201,7 @@ class LocalDatabase(BaseDB):
         except:
             traceback.print_exc()
 
-        self.cache[(db_name, collection, frozenset({"_id": id_}.items()))] = data
+        self.cache[f"{collection}:{db_name}:{id_}"] = data
 
         return data
 
@@ -208,7 +215,7 @@ class LocalDatabase(BaseDB):
             return
 
         try:
-            self.cache.pop((db_name, collection, frozenset({"_id": id_}.items())))
+            self.cache.pop(f"{collection}:{db_name}:{id_}")
         except KeyError:
             pass
 
@@ -264,12 +271,6 @@ class MongoDatabase(BaseDB):
                 except:
                     traceback.print_exc()
 
-    async def get_secret_data(self, id_:int, db_name: Union[DBModel.users_secret, DBModel.global_secrets]):
-        return await self.get_data(
-            id_=id_, db_name=db_name, collection="global",
-            default_model=global_db_models
-        )
-
     async def get_data(self, id_: int, *, db_name: Union[DBModel.guilds, DBModel.users],
                        collection: str, default_model: dict = None):
 
@@ -278,17 +279,16 @@ class MongoDatabase(BaseDB):
 
         id_ = str(id_)
 
-        if (cached_result := self.cache.get((db_name, collection, frozenset({"_id": id_}.items())))) is not None:
+        if (cached_result := self.cache.get(f"{collection}:{db_name}:{id_}")) is not None:
             return cached_result
 
         data = await self._connect[collection][db_name].find_one({"_id": id_})
 
         if not data:
-            data = default_model[db_name].copy()
-            return data
+            return deepcopy(default_model[db_name])
 
         elif data["ver"] != default_model[db_name]["ver"]:
-            data = update_values(default_model[db_name].copy(), data)
+            data = update_values(deepcopy(default_model[db_name]), data)
             data["ver"] = default_model[db_name]["ver"]
             await self.update_data(id_, data, db_name=db_name, collection=collection)
 
@@ -297,8 +297,14 @@ class MongoDatabase(BaseDB):
     async def update_data(self, id_, data: dict, *, db_name: Union[DBModel.guilds, DBModel.users, str],
                           collection: str, default_model: dict = None):
 
+        self.cache[f"{collection}:{db_name}:{id_}"] = data
+
+        try:
+            del data["_id"]
+        except KeyError:
+            pass
+
         await self._connect[collection][db_name].update_one({'_id': str(id_)}, {'$set': data}, upsert=True)
-        self.cache[(db_name, collection, frozenset({"_id": id_}.items()))] = data
         return data
 
     async def query_data(self, db_name: str, collection: str, filter: dict = None, limit=100) -> list:
@@ -306,7 +312,7 @@ class MongoDatabase(BaseDB):
 
     async def delete_data(self, id_, db_name: str, collection: str):
         try:
-            self.cache.pop((db_name, collection, frozenset({"_id": id_}.items())))
+            self.cache.pop(f"{collection}:{db_name}:{id_}")
         except KeyError:
             pass
         return await self._connect[collection][db_name].delete_one({'_id': str(id_)})

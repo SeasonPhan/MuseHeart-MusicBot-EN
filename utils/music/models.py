@@ -3,28 +3,33 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import itertools
 import pprint
 import random
 import re
 import traceback
 import uuid
 from collections import deque
-from contextlib import suppress
 from itertools import cycle
 from time import time
 from typing import Optional, Union, TYPE_CHECKING, List
 from urllib import parse
-from urllib.parse import quote
+from urllib.parse import quote, quote_plus
 
 import disnake
+from rapidfuzz import fuzz
+from yt_dlp import YoutubeDL
 
 import wavelink
 from utils.db import DBModel
 from utils.music.checks import can_connect
 from utils.music.converters import fix_characters, time_format, get_button_style
+from utils.music.errors import GenericError, PoolException
 from utils.music.filters import AudioFilter
+from utils.music.lastfm_tools import LastFmException
 from utils.music.skin_utils import skin_converter
-from utils.others import music_source_emoji, send_idle_embed, PlayerControls, song_request_buttons
+from utils.music.track_encoder import encode_track, DataWriter
+from utils.others import music_source_emoji, send_idle_embed, PlayerControls, string_to_file
 from wavelink import TrackStart, TrackEnd
 
 if TYPE_CHECKING:
@@ -32,7 +37,7 @@ if TYPE_CHECKING:
 
 exclude_tags = ["remix", "edit", "extend", "compilation", "mashup", "mixed"]
 exclude_tags_2 = ["extend", "compilation", "mashup", "nightcore", "8d", "mixed"]
-emoji_pattern = re.compile('<a?:.+?:\d+?>')
+emoji_pattern = re.compile(r'<a?:.+?:\d+?>')
 
 thread_archive_time = {
     60: 30,
@@ -49,6 +54,8 @@ providers_dict = {
     "spotify": "spsearch",
     "tidal": "tdsearch",
 }
+
+native_sources = {"http", "youtube", "soundcloud", "tts", "reddit", "ocremix", "tiktok", "mixcloud", "soundgasm", "flowerytts", "vimeo", "twitch", "bandcamp", "local"}
 
 
 def get_start_pos(player, track, extra_milliseconds=0):
@@ -92,11 +99,11 @@ class PartialPlaylist:
 
 
 class PartialTrack:
-    __slots__ = ('id', 'source_name', 'info', 'playlist', 'unique_id', 'ytid', 'temp_id')
+    __slots__ = ('id', 'info', 'playlist', 'unique_id', 'ytid')
 
     def __init__(self, *, uri: str = "", title: str = "", author="", thumb: str = "", duration: int = 0,
                  requester: int = 0, track_loops: int = 0, source_name: str = "", autoplay: bool = False,
-                 identifier: str = "", info: dict = None, playlist: PartialPlaylist = None):
+                 identifier: str = "", info: dict = None, playlist: PartialPlaylist = None, ytid = ''):
 
         self.info = info or {
             "author": fix_characters(author)[:97],
@@ -117,18 +124,20 @@ class PartialTrack:
         }
 
         self.id = None
-        self.ytid = ""
+        self.ytid = ytid
         self.unique_id = str(uuid.uuid4().hex)[:10]
-        self.temp_id = None
         self.playlist: Optional[PartialPlaylist] = playlist
 
     def __repr__(self):
         return f"{self.info['sourceName']} - {self.duration} - {self.authors_string} - {self.title}"
 
+    def __str__(self):
+        return f"{self.info['sourceName']} - {self.duration} - {self.authors_string} - {self.title}"
+
     @property
     def thumb(self) -> str:
         try:
-            return self.info["extra"]["thumb"]
+            return self.info["extra"]["thumb"] or self.info["artworkUrl"]
         except KeyError:
             try:
                 return self.info["artworkUrl"]
@@ -137,7 +146,7 @@ class PartialTrack:
 
     @property
     def uri(self) -> str:
-        return self.info["uri"]
+        return self.info["uri"] or self.search_uri
 
     @property
     def url(self) -> str:
@@ -145,7 +154,7 @@ class PartialTrack:
 
     @property
     def search_uri(self):
-        return f"https://www.youtube.com/results?search_query={quote(self.title)}"
+        return f"https://www.youtube.com/results?search_query={quote_plus((self.author + '-' + self.single_title) if self.info['sourceName'] not in ('youtube', 'soundcloud') else self.title)}"
 
     @property
     def title(self) -> str:
@@ -166,12 +175,16 @@ class PartialTrack:
                 return ""
 
     @property
+    def source_name(self):
+        return self.info["sourceName"] or "unkown"
+
+    @property
     def single_title(self) -> str:
         return self.info["title"]
 
     @property
     def author(self) -> str:
-        return self.info["author"]
+        return self.info["author"] or "Artista Desconhecido"
 
     @property
     def authors_string(self) -> str:
@@ -285,8 +298,9 @@ class LavalinkPlaylist:
                     self.url = f"https://www.youtube.com/playlist?list={parse.parse_qs(parse.urlparse(self.url).query)['list'][0]}"
                 except KeyError:
                     pass
-        except IndexError:
+        except (IndexError, KeyError):
             pass
+
         pluginInfo = kwargs.pop("pluginInfo", {})
         thumb = None
         try:
@@ -296,7 +310,7 @@ class LavalinkPlaylist:
         except KeyError:
             playlist = self
         self.tracks = [LavalinkTrack(
-            id_=track[encoded_name], info=track['info'], pluginInfo=track.get("pluginInfo") or pluginInfo, thumb=thumb, playlist=playlist, **kwargs) for track in data['tracks']]
+            id_=track[encoded_name], info=track['info'], pluginInfo=track.get("pluginInfo") or pluginInfo, thumb=thumb, playlist=playlist, **kwargs) for track in data.get('tracks', [])]
 
     @property
     def uri(self):
@@ -319,7 +333,7 @@ class LavalinkPlaylist:
 
 
 class LavalinkTrack(wavelink.Track):
-    __slots__ = ('extra', 'playlist', 'unique_id', 'temp_id')
+    __slots__ = ('extra', 'playlist', 'unique_id')
 
     def __init__(self, *args, **kwargs):
         try:
@@ -330,7 +344,6 @@ class LavalinkTrack(wavelink.Track):
         self.title = fix_characters(self.title)
         self.info["title"] = self.title
         self.unique_id = str(uuid.uuid4().hex)[:10]
-        self.temp_id = None
 
         try:
             self.info['sourceName']
@@ -349,11 +362,15 @@ class LavalinkTrack(wavelink.Track):
         try:
             self.info["extra"]
         except KeyError:
-            self.info["extra"] = {
+            self.info["extra"] = {}
+
+        self.info["extra"].update(
+            {
                 "track_loops": kwargs.pop('track_loops', 0),
                 "requester": kwargs.pop('requester', ''),
                 "autoplay": kwargs.pop("autoplay", '')
             }
+        )
 
         self.playlist: Optional[LavalinkPlaylist] = kwargs.pop(
             "playlist", None)
@@ -362,19 +379,17 @@ class LavalinkTrack(wavelink.Track):
             self.info["artworkUrl"] = f"https://img.youtube.com/vi/{self.ytid}/mqdefault.jpg"
             if "list=" not in self.uri:
                 try:
-                    self.uri = f"{self.uri}&list={parse.parse_qs(parse.urlparse(self.playlist_url or self.album_url).query)['list'][0]}"
-                    self.info["uri"] = self.uri
+                    self.info['uri'] = f"{self.uri}&list={parse.parse_qs(parse.urlparse(self.playlist_url or self.album_url).query)['list'][0]}"
                 except KeyError:
                     pass
 
         elif self.info["sourceName"] == "soundcloud":
 
-            self.info["artworkUrl"] = self.info.get("artworkUrl", "").replace('-large.', '-t500x500.')
+            self.info["artworkUrl"] = self.info.get("artworkUrl", "").replace('-large.', '-t500x500.').replace('-original.', '-t500x500.')
 
             if "?in=" not in self.uri:
                 try:
-                    self.uri = f"{self.uri}?in=" + self.playlist_url.split("soundcloud.com/")[1]
-                    self.info["uri"] = self.uri
+                    self.info['uri'] = f"{self.uri}?in=" + self.playlist_url.split("soundcloud.com/")[1]
                 except:
                     pass
 
@@ -387,6 +402,10 @@ class LavalinkTrack(wavelink.Track):
     @property
     def thumb(self) -> str:
         return self.info["artworkUrl"] or ""
+
+    @property
+    def source_name(self):
+        return self.info["sourceName"] or "unkown"
 
     @property
     def name(self) -> str:
@@ -414,8 +433,8 @@ class LavalinkTrack(wavelink.Track):
         return f"`{self.author}`"
 
     @property
-    def authors(self) -> str:
-        return f"{self.author}"
+    def authors(self) -> List[str]:
+        return [f"{self.author}"]
 
     @property
     def authors_string(self) -> str:
@@ -498,6 +517,7 @@ class LavalinkPlayer(wavelink.Player):
         self.played: deque = deque(maxlen=20)
         self.queue_autoplay: deque = deque(maxlen=30)
         self.failed_tracks: deque = deque(maxlen=30)
+        self.command_log_list = deque(maxlen=10)
         self.autoplay: bool = kwargs.pop("autoplay", False)
         self.nightcore: bool = False
         self.loop = False
@@ -510,10 +530,10 @@ class LavalinkPlayer(wavelink.Player):
         self.player_creator: Optional[int] = kwargs.pop('player_creator', None)
         self.filters: dict = {}
         self.idle_task: Optional[asyncio.Task] = None
-        self.hook_event_task = {}
         self.members_timeout_task: Optional[asyncio.Task] = None
         self.reconnect_voice_channel_task: Optional[asyncio.Task] = None
         self.idle_endtime: Optional[datetime.datetime] = None
+        self.idle_start_timestamp: Optional[int] = None
         self.hint_rate = self.bot.config["HINT_RATE"]
         self.command_log: str = ""
         self.command_log_emoji: str = ""
@@ -523,14 +543,18 @@ class LavalinkPlayer(wavelink.Player):
         self.update: bool = False
         self.updating: bool = False
         self.auto_update: int = 0
+        self.live_lyrics_enabled = False
+        self.has_lyrics = False
+        self.np_original_data = None
+        self.lyric_task: Optional[asyncio.Task] = None
         self.listen_along_invite = kwargs.pop("listen_along_invite", "")
         self.message_updater_task: Optional[asyncio.Task] = None
-        # limitar apenas para dj's e staff's
+        # limit only for dj's and staff's
         self.restrict_mode = kwargs.pop('restrict_mode', False)
-        self.ignore_np_once = False  # não invocar player controller em determinadas situações
+        self.ignore_np_once = False  # do not invoke player controller in certain situations
         self.allowed_mentions = disnake.AllowedMentions(users=False, everyone=False, roles=False)
         self.uptime = kwargs.pop("uptime", None) or int(disnake.utils.utcnow().timestamp())
-        # ativar/desativar modo controller (apenas para uso em skins)
+        # enable/disable controller mode (only for use in skins)
         self.controller_mode = True
         self.mini_queue_feature = False
         self.mini_queue_enabled = False
@@ -544,6 +568,7 @@ class LavalinkPlayer(wavelink.Player):
         self._new_node_task: Optional[asyncio.Task] = None
         self._queue_updater_task: Optional[asyncio.Task] = None
         self.auto_skip_track_task: Optional[asyncio.Task] = None
+        self.track_load_task: Optional[asyncio.Task] = None
         self.native_yt: bool = True
         self.stage_title_event = False
         self.stage_title_template: str = kwargs.pop("stage_title_template", None) or "Playing: {track.title} | {track.author}"
@@ -555,8 +580,13 @@ class LavalinkPlayer(wavelink.Player):
         self.prefix_info = kwargs.pop("prefix", "")
 
         self.start_time = disnake.utils.utcnow()
+        self.start_timestamp = self.start_time.timestamp()
 
         self.lastfm_artists = []
+
+        self.event_queue = asyncio.Queue()
+
+        self.extra_info = {}
 
         self.initial_hints = [
             f"It is possible to change the player's skin/appearance using the command /change_skin or {self.prefix_info}skin "
@@ -566,20 +596,22 @@ class LavalinkPlayer(wavelink.Player):
             f"the command /custom_skin or {self.prefix_info}customskin (Only members with administrator permissions "
             "can use this command).",
 
-            "It is possible to set an automatic status in the voice channel "
-            "with information about the song currently playing. Try using the /set_voice_status command or "
-            f"{self.prefix_info}stageannounce (Only members with server management permission can use this feature)."
+            "It is possible to set an automatic status in the voice channel with information about "
+            "the song currently playing. Try using the /set_voice_status command or "
+            f"{self.prefix_info}stageannounce (Only members with server management permission can use this feature).",
+
+            f"If the music is lagging, audio freezing, etc. Try changing the voice channel region "
+            f"(if you are on a stage, use the {self.prefix_info}stageregion command)."
         ]
 
         self.retry_setup_hints = False
 
-        hint_platforms = []
+        hint_platforms = ["youtube, soundcloud"]
 
-        if self.bot.config["USE_YTDL"]:
-            hint_platforms.append("youtube, soundcloud")
-
-        if self.bot.spotify:
+        if (self.bot.spotify and not self.bot.spotify.disabled) or "spotify" in self.node.info["sourceManagers"]:
             hint_platforms.append("spotify")
+
+        hint_platforms.append("deezer")
 
         if self.bot.config["LASTFM_KEY"] and self.bot.config["LASTFM_SECRET"]:
             self.initial_hints.append(
@@ -605,6 +637,8 @@ class LavalinkPlayer(wavelink.Player):
         self.hints: cycle = []
         self.current_hint: str = ""
         self.last_data: dict = {}
+        self.lyric_embed: Optional[disnake.Embed] = None
+        self.event_queue_task = self.bot.loop.create_task(self.hook_events())
         self.check_skins()
         self.setup_features()
         self.setup_hints()
@@ -672,7 +706,7 @@ class LavalinkPlayer(wavelink.Player):
         self.position_timestamp = state.get('time', 0)
         self.ping = state.get('ping', None)
 
-    async def report_error(self, embed: disnake.Embed, track: Union[LavalinkTrack, PartialTrack]):
+    async def report_error(self, embed: disnake.Embed, track: Union[LavalinkTrack, PartialTrack], error: Exception = None):
 
         cog = self.bot.get_cog("Music")
 
@@ -691,33 +725,19 @@ class LavalinkPlayer(wavelink.Player):
             if self.guild.icon:
                 embed.set_thumbnail(url=self.guild.icon.with_format("png").url)
 
-            await cog.error_report_queue.put({"embed": embed})
+            error_kwargs = {"embed": embed}
+
+            if error:
+                error_kwargs["file"] = string_to_file(
+                    "".join(traceback.format_exception(type(error), error, error.__traceback__)),
+                    "error_partialtrack.txt"
+                )
+
+            await cog.error_report_queue.put(error_kwargs)
 
     async def reconnect_voice_channel(self):
 
-        try:
-            vc = self.bot.get_channel(self.last_channel.id)
-        except AttributeError:
-            vc = None
-
-        if not vc:
-
-            msg = "The voice channel was deleted..."
-
-            if self.static:
-                self.set_command_log(msg)
-                await self.destroy()
-
-            else:
-                if self.text_channel:
-                    try:
-                        self.bot.loop.create_task(self.text_channel.send(embed=disnake.Embed(
-                        description=msg,
-                        color=self.bot.get_color(self.guild.me)), delete_after=7))
-                    except:
-                        traceback.print_exc()
-                await self.destroy()
-                return
+        channel_check_retries = 0
 
         while True:
 
@@ -725,6 +745,36 @@ class LavalinkPlayer(wavelink.Player):
                 self.bot.music.players[self.guild_id]
             except KeyError:
                 return
+
+            try:
+                vc = self.bot.get_channel(self.last_channel.id)
+            except AttributeError:
+                vc = None
+
+            if not vc:
+
+                if channel_check_retries < 3:
+                    channel_check_retries += 1
+                    await asyncio.sleep(3 * channel_check_retries)
+                    continue
+
+                msg = "The voice channel was deleted..."
+
+                if self.static:
+                    self.set_command_log(msg, controller=True)
+                    await self.destroy()
+                    return
+
+                else:
+                    if self.text_channel:
+                        try:
+                            self.bot.loop.create_task(self.text_channel.send(embed=disnake.Embed(
+                                description=msg,
+                                color=self.bot.get_color(self.guild.me)), delete_after=7))
+                        except:
+                            traceback.print_exc()
+                    await self.destroy()
+                    return
 
             if self.guild.me.voice:
                 if isinstance(vc, disnake.StageChannel) \
@@ -743,373 +793,47 @@ class LavalinkPlayer(wavelink.Player):
 
                 try:
                     can_connect(vc, self.guild, bot=self.bot)
-                except Exception as e:
-                    self.set_command_log(f"The Player was terminated due to an error: {e}")
-                    await self.destroy()
-                    return
-
-
-                if (ping:=round(self.bot.latency * 1000)) > self.bot.pool.config["VOICE_CHANNEL_LATENCY_RECONNECT"]:
-                    voice_msg = f"I reconnected to the voice channel due to a possible connection instability issue (ping: {ping}ms)."
-                elif self.keep_connected:
-                    voice_msg = f"I noticed an attempt to disconnect me from the channel <#{vc.id}>."
-                else:
-                    voice_msg = None
-
-                if not voice_msg:
-                    self.set_command_log(text=f"The player was disconnected due to loss of connection on the channel <#{vc.id}>.",
-                                           emoji="⚠️")
-                    await self.destroy()
-                    return
-
-                try:
-                    await self.connect(vc.id)
-                    self.set_command_log(text=f"{voice_msg}\nIf you really want to disconnect me, use the command/button: **stop**.",
-                                           emoji="⚠️")
+                except (GenericError, PoolException) as e:
+                    self.set_command_log(f"Ocorreu uma falha ao reconectar o player no canal de voz: {e}.", controller=True)
                     self.update = True
-                    await asyncio.sleep(5)
-                    continue
-                except Exception:
-                    traceback.print_exc()
+                except Exception as e:
+                    self.set_command_log(f"A failure occurred while reconnecting the player to the voice channel: {repr(e)}.", controller=True)
+                    self.update = True
+                else:
+                    if (ping := round(self.bot.latency * 1000)) > 250:
+                        voice_msg = f"Reconnected to the voice channel due to a possible instability issue in the connection (ping: {ping}ms)."
+                    elif self.keep_connected:
+                        voice_msg = f"I noticed an attempt to disconnect me from the channel <#{vc.id}>."
+                    else:
+                        voice_msg = None
+
+                    if not voice_msg:
+                        self.set_command_log(text=f"The player was terminated due to loss of connection in the channel <#{vc.id}>.",
+                                             emoji="⚠️", controller=True)
+                        await self.destroy()
+                        return
+
+                    try:
+                        await self.connect(vc.id)
+                        self.set_command_log(
+                            text=f"{voice_msg}\nIf you really want to disconnect me, use the command/button: **stop**.",
+                            emoji="⚠️", controller=True)
+                        self.update = True
+                        await asyncio.sleep(5)
+                        continue
+                    except Exception:
+                        traceback.print_exc()
 
             await asyncio.sleep(30)
 
     async def hook(self, event) -> None:
-
-        """if self.is_closing:
-            return
-
-        event_name = str(event)
-
-        if self.hook_event_task.get(event_name):
-            return
-
-        self.hook_event_task[event_name] = self.bot.loop.create_task(self.hook_events(event))"""
-        await self.hook_events(event)
-
-    async def hook_events(self, event):
-
-        await self.bot.wait_until_ready()
-
-        if isinstance(event, wavelink.TrackEnd):
-
-            if event.node.identifier != self.node.identifier:
-                return
-
-            self.bot.dispatch("wavelink_track_end", player=self, track=self.last_track, reason=event.reason)
-
-            if self.locked:
-                return
-
-            if event.reason == "FINISHED":
-                self.set_command_log()
-
-            elif event.reason == "STOPPED":
-
-                if len(self.queue) == 0:
-                    return
-
-                self.ignore_np_once = True
-
-            else:
-                return
-
-            try:
-                self.message_updater_task.cancel()
-            except:
-                pass
-
-            await self.track_end()
-
-            self.update = False
-
-            await self.process_next()
-
-            return
-
-        if isinstance(event, wavelink.TrackStart):
-
-            if event.node.identifier != self.node.identifier:
-                return
-
-            self.start_time = disnake.utils.utcnow()
-
-            self.bot.dispatch("wavelink_track_start", player=self)
-
-            if self.text_channel:
-
-                if isinstance(self.text_channel, disnake.Thread):
-                    send_message_perm = self.text_channel.parent.permissions_for(self.guild.me).send_messages_in_threads
-                else:
-                    send_message_perm = self.text_channel.permissions_for(self.guild.me).send_messages
-
-                if not send_message_perm:
-                    self.text_channel = None
-
-            if not self.guild.me.voice:
-                try:
-                    await self.bot.wait_for(
-                        "voice_state_update", check=lambda m, b, a: m == self.guild.me and m.voice, timeout=7
-                    )
-                except asyncio.TimeoutError:
-                    self.update = True
-                    return
-
-            try:
-                await self.process_save_queue()
-            except:
-                traceback.print_exc()
-
-            await asyncio.sleep(2)
-            await self.update_stage_topic()
-            return
-
-        if isinstance(event, wavelink.TrackException):
-
-            track = self.current or self.last_track
-            node_info = f"`{event.node.identifier}`" if event.node.identifier == self.node.identifier else f"`{self.node.identifier} | {event.node.identifier}`"
-            embed = disnake.Embed(
-                description=f"**Failed to play music:\n[{track.title}]({track.uri or track.search_uri})** ```java\n{event.message}```\n"
-                            f"**Cause:** ```java\n{event.cause[:200]}```\n"
-                            f"**Severity:** `{event.severity}`\n"
-                            f"**Music server:** {node_info}",
-                color=disnake.Colour.red())
-
-            error_format = pprint.pformat(event.data)
-
-            async def send_report():
-
-                print(("-" * 50) + f"\nError while playing the song: {track.uri or track.search_uri}\n"
-                                   f"Server: {self.node.identifier}\n"
-                                   f"{error_format}\n" + ("-" * 50))
-
-                await self.report_error(embed, track)
-
-            if event.node.identifier != self.node.identifier:
-                await send_report()
-                return
-
-            if self.locked:
-                self.set_command_log(
-                    text=f"The music playback failed (trying to play again): [`{fix_characters(track.title, 15)}`](<{track.uri or track.search_uri}>). **Cause:** `{event.cause[:50]}`")
-                self.update = True
-                await send_report()
-                return
-
-            self.locked = True
-
-            self.current = None
-
-            youtube_exception = False
-            video_not_available = False
-
-            cooldown = 10
-
-            if event.cause.startswith((
-                    "java.net.SocketTimeoutException: Read timed out",
-                    "java.net.SocketException: Network is unreachable",
-            )) \
-                or (video_not_available:=event.cause.startswith((
-                "com.sedmelluq.discord.lavaplayer.tools.FriendlyException: This video is not available",
-                "com.sedmelluq.discord.lavaplayer.tools.FriendlyException: YouTube WebM streams are currently not supported.",
-                "java.lang.IllegalStateException: Connection pool shut down",
-            )) or event.message in ("Video returned by YouTube isn't what was requested", "The video returned is not what was requested.")):
-                await send_report()
-
-                self.current = None
-                self.queue.appendleft(track)
-
-                if video_not_available:
-
-                    with suppress(IndexError, ValueError):
-                        self.node.search_providers.remove("ytsearch")
-                        self.node.search_providers.remove("ytmsearch")
-                        self.node.partial_providers.remove("ytsearch:\"{isrc}\"")
-                        self.node.partial_providers.remove("ytsearch:\"{title} - {author}\"")
-                        self.node.partial_providers.remove("ytmsearch:\"{isrc}\"")
-                        self.node.partial_providers.remove("ytmsearch:\"{title} - {author}\"")
-
-                    self.native_yt = False
-
-                    if track.info["sourceName"] == "youtube":
-                        txt = f"Due to YouTube restrictions on the server `{self.node.identifier}`, during the current session " \
-                                 "an attempt will be made to obtain the same music from other music platforms using the names " \
-                                 "of the YouTube songs that are in the queue (the song played might be different from expected " \
-                                 "or even ignored if no results are returned)."
-
-                        try:
-                            await self.text_channel.send(embed=disnake.Embed(description=txt, color=self.bot.get_color(self.guild.me)), delete_after=60)
-                        except:
-                            self.set_command_log(text=txt, emoji="⚠️")
-                    await asyncio.sleep(3)
-                    self.locked = False
-                    await self.process_next(start_position=self.position)
-                    self.hook_event_task[str(event)] = None
-
-                else:
-                    await asyncio.sleep(10)
-                    self.current = track
-                    await self.play(track=track, start=self.position)
-                return
-
-            if (youtube_exception := (event.error == "This IP address has been blocked by YouTube (429)" or
-                #event.message == "Video returned by YouTube isn't what was requested" or
-                event.cause.startswith(("java.lang.RuntimeException: Not success status code: 403",
-                    "com.sedmelluq.discord.lavaplayer.tools.FriendlyException: This video is unavailable",
-                    "java.io.IOException: Invalid status code for video page response: 400"))
-            )):
-
-                if youtube_exception and self.node.retry_403:
-
-                    if not hasattr(self, 'retries_403'):
-                        self.retries_403 = {"last_time": None, 'counter': 0}
-
-                    if not self.retries_403["last_time"] or ((disnake.utils.utcnow() - self.retries_403["last_time"]).total_seconds() > self.bot.pool.config.get("ERROR_403_RETRIES", 7)):
-                        self.retries_403 = {"last_time": disnake.utils.utcnow(), 'counter': 0}
-                        if self.auto_pause:
-                            self.update = True
-                        else:
-                            await self.play(track, start=get_start_pos(self, track, self.bot.pool.config.get("ERROR_403_ADDITIONAL_MILLISECONDS", 430)))
-                            await asyncio.sleep(3)
-                        self.locked = False
-                        self.update = True
-                        self.hook_event_task[str(event)] = None
-                        return
-
-                    elif self.retries_403["counter"] < 3:
-                        self.retries_403["counter"] += 1
-                        await asyncio.sleep(3)
-                        self.retries_403["last_time"] = disnake.utils.utcnow()
-
-                        if self.is_closing:
-                            return
-
-                        self.locked = False
-                        self.hook_event_task[str(event)] = None
-                        self.set_command_log(
-                            text=f'Error 403 occurred while playing the current song on YouTube. Attempt {self.retries_403["counter"]}/5...')
-                        if not self.auto_pause:
-                            self.update = True
-                        else:
-                            await self.play(track, start=get_start_pos(self, track, self.bot.pool.config.get("ERROR_403_ADDITIONAL_MILLISECONDS", 430)))
-                            self.update = True
-                        await send_report()
-                        return
-
-                    self.queue.append(track)
-
-                self.retries_403 = {"last_time": None, 'counter': 0}
-
-                if youtube_exception:
-
-                    with suppress(IndexError, ValueError):
-                        self.node.search_providers.remove("ytsearch")
-                        self.node.search_providers.remove("ytmsearch")
-                        self.node.partial_providers.remove("ytsearch:\"{isrc}\"")
-                        self.node.partial_providers.remove("ytsearch:\"{title} - {author}\"")
-                        self.node.partial_providers.remove("ytmsearch:\"{isrc}\"")
-                        self.node.partial_providers.remove("ytmsearch:\"{title} - {author}\"")
-
-                    self.native_yt = False
-                    self.current = None
-                    self.queue.appendleft(track)
-                    self.locked = False
-                    self.hook_event_task[str(event)] = None
-                    if track.info["sourceName"] == "youtube":
-                        self.set_command_log(
-                            text=f"Due to YouTube restrictions on the server `{self.node.identifier}`, during the current session "
-                                 "an attempt will be made to obtain the same music from other music platforms using the names "
-                                 "of the YouTube songs that are in the queue (the song played might be different from expected "
-                                 "or even ignored if no results are returned).",
-                            emoji="⚠️"
-                        )
-                    await asyncio.sleep(5)
-                    await self.process_next(start_position=self.position)
-                    await send_report()
-                    return
-
-            await send_report()
-
-            start_position = 0
-
-            if event.cause.startswith((
-                    "java.lang.IllegalStateException: Failed to get media URL: 2000: An error occurred while decoding track token",
-                    "java.lang.RuntimeException: Not success status code: 204",
-                    "java.net.SocketTimeoutException: Connect timed out",
-                    "java.lang.IllegalArgumentException: Invalid bitrate",
-                    "java.net.UnknownHostException:",
-                    "java.lang.IllegalStateException: Error from decoder",
-                    "java.lang.IllegalStateException: Current position is beyond this element",
-                    "com.sedmelluq.discord.lavaplayer.tools.io.PersistentHttpStream$PersistentHttpException: Not success status code: 403",
-            )):
-
-                if not hasattr(self, 'retries_general_errors'):
-                    self.retries_general_errors = {'counter': 6, 'last_node': self.node.identifier,
-                                                   "last_time": disnake.utils.utcnow()}
-
-                embed = None
-
-                self.queue.appendleft(track)
-
-                if self.retries_general_errors["counter"] < 1 and self.node.identifier == self.retries_general_errors["last_node"] and (disnake.utils.utcnow() - self.retries_general_errors["last_time"]).total_seconds() < 180:
-
-                    try:
-                        self._new_node_task.cancel()
-                    except:
-                        pass
-                    self._new_node_task = self.bot.loop.create_task(
-                        self._wait_for_new_node(ignore_node=self.node))
-                    return
-
-                self.retries_general_errors["last_time"] = disnake.utils.utcnow()
-
-                if self.retries_general_errors['last_node'] == self.node.identifier:
-                    self.retries_general_errors['counter'] -= 1
-                else:
-                    self.retries_general_errors = {'counter': 6, 'last_node': self.node.identifier,
-                                                   "last_time": disnake.utils.utcnow()}
-
-                start_position = get_start_pos(self, track)
-
-                cooldown = 4
-
-            elif event.cause == "java.lang.InterruptedException":
-                embed = None
-                self.queue.appendleft(track)
-                try:
-                    self._new_node_task.cancel()
-                except:
-                    pass
-                self._new_node_task = self.bot.loop.create_task(self._wait_for_new_node())
-                return
-
-            elif not track.track_loops:
-                self.failed_tracks.append(track)
-
-            elif self.keep_connected and not track.autoplay and len(self.queue) > 15:
-                self.queue.append(track)
-
-            if isinstance(self.text_channel, disnake.Thread):
-                send_message_perm = self.text_channel.parent.permissions_for(self.guild.me).send_messages_in_threads
-            else:
-                send_message_perm = self.text_channel.permissions_for(self.guild.me).send_messages
-
-            if embed and self.text_channel and send_message_perm:
-                await self.text_channel.send(embed=embed, delete_after=10)
-
-            await asyncio.sleep(cooldown)
-
-            self.locked = False
-            self.hook_event_task[str(event)] = None
-            await self.process_next(start_position=start_position)
-            return
 
         if isinstance(event, wavelink.WebsocketClosed):
 
             if event.code == 1000:
                 return
 
-            if not self.guild.me:
+            if not self.guild.me or (event.code == 4014 and event.reason.startswith("Disconnected") and not self.keep_connected):
                 await self.destroy(force=True)
                 return
 
@@ -1117,6 +841,17 @@ class LavalinkPlayer(wavelink.Player):
                 vc = self.last_channel or self.guild.me.voice.channel
             except AttributeError:
                 vc = None
+
+            if event.code == 4022:
+                if self.keep_connected and vc:
+                    await asyncio.sleep(5)
+                    self.set_command_log(emoji="⚠️", text=f"If you want to disconnect me from the channel {vc.mention} with 24/7 mode active, use the command or the **stop** button.")
+                    await self.connect(vc.id)
+                    self.update = True
+                else:
+                    await self.destroy(force=True)
+                    print(f"Bot: {self.bot.user} | Disconnected from voice channel: {self.guild_id}")
+                return
 
             if event.code == 4014 and self.guild.me.voice:
                 pass
@@ -1159,40 +894,320 @@ class LavalinkPlayer(wavelink.Player):
                     4014,
                     4006,  # Session is no longer valid.
             ):
+
                 await asyncio.sleep(5)
+
                 try:
                     self.bot.music.players[self.guild_id]
                 except KeyError:
                     return
-                if self.guild and self.guild.me.voice:
+
+                if self.guild and self.guild.me.voice or self.is_closing:
                     return
-                self.set_command_log(f"The player was disconnected due to loss of connection with the channel {self.last_channel.mention}...")
-                await self.destroy(force=True)
+
+                try:
+                    vc_id = self.guild.me.voice.channel.id
+                except AttributeError:
+                    vc_id = self.last_channel.id
+
+                await self.connect(vc_id)
                 return
 
-        if isinstance(event, wavelink.TrackStuck):
+        else:
+            await self.event_queue.put(event)
+
+    async def hook_events(self):
+
+        while True:
 
             try:
-                self.message_updater_task.cancel()
-            except:
-                pass
 
-            await self.track_end()
+                event = await self.event_queue.get()
 
-            self.update = False
+                if self.is_closing:
+                    return
 
-            try:
-                self.set_command_log(text=f"The song [{fix_characters(self.current.single_title, 25)}](<{self.current.uri}>) froze.", emoji="⚠️")
-            except:
-                pass
+                await self.bot.wait_until_ready()
 
-            await self.process_next()
+                if isinstance(event, wavelink.TrackEnd):
 
-            return
+                    if event.node.identifier != self.node.identifier:
+                        continue
 
-        print(f"Unknown Wavelink event: {repr(event)}")
+                    self.bot.dispatch("wavelink_track_end", player=self, track=self.last_track, reason=event.reason)
+
+                    if self.locked:
+                        continue
+
+                    if event.reason == "FINISHED":
+                        self.set_command_log(controller=True)
+
+                    elif event.reason == "STOPPED":
+
+                        if len(self.queue) == 0:
+                            continue
+
+                        self.ignore_np_once = True
+
+                    else:
+                        continue
+
+                    try:
+                        self.message_updater_task.cancel()
+                    except:
+                        pass
+
+                    await self.track_end()
+
+                    self.update = False
+
+                    await self.process_next()
+
+                    continue
+
+                if isinstance(event, wavelink.TrackStart):
+
+                    if event.node.identifier != self.node.identifier:
+                        continue
+
+                    self.bot.dispatch("wavelink_track_start", player=self)
+
+                    if self.text_channel:
+
+                        if isinstance(self.text_channel, disnake.Thread):
+                            send_message_perm = self.text_channel.parent.permissions_for(self.guild.me).send_messages_in_threads
+                        else:
+                            send_message_perm = self.text_channel.permissions_for(self.guild.me).send_messages
+
+                        if not send_message_perm:
+                            self.text_channel = None
+
+                    if not self.guild.me.voice:
+                        try:
+                            await self.bot.wait_for(
+                                "voice_state_update", check=lambda m, b, a: m == self.guild.me and m.voice, timeout=7
+                            )
+                        except asyncio.TimeoutError:
+                            self.update = True
+                            continue
+
+                    try:
+                        await self.process_save_queue()
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        traceback.print_exc()
+
+                    await asyncio.sleep(2)
+                    await self.update_stage_topic()
+                    continue
+
+                if isinstance(event, wavelink.TrackException):
+
+                    track = self.current or self.last_track
+                    node_info = f"`{event.node.identifier}`" if event.node.identifier == self.node.identifier else f"`{self.node.identifier} | {event.node.identifier}`"
+                    embed = disnake.Embed(
+                        description=f"**Failed to play song{' (partial)' if isinstance(track, PartialTrack) else ''}:\n[{track.title}]({track.uri or track.search_uri})** ```java\n{event.message}```\n"
+                                    f"**Cause:** ```java\n{event.cause[:200]}```\n"
+                                    f"**Level:** `{event.severity}`\n"
+                                    f"**Music server:** {node_info}",
+                        color=disnake.Colour.red())
+
+                    error_format = pprint.pformat(event.data)
+
+                    async def send_report():
+
+                        print(("-" * 50) + f"\nError playing the song: {track.uri or track.search_uri}\n"
+                                           f"Server: {self.node.identifier}\n"
+                                           f"{error_format}\n" + ("-" * 50))
+
+                        await self.report_error(embed, track)
+
+                    if event.node.identifier != self.node.identifier:
+                        await send_report()
+                        continue
+
+                    if self.locked:
+                        self.set_command_log(
+                            text=f"Song playback failed (trying to play again): [`{fix_characters(track.title, 15)}`](<{track.uri or track.search_uri}>). **Cause:** `{event.cause[:50]}`", controller=True)
+                        self.update = True
+                        await send_report()
+                        continue
+
+                    self.locked = True
+
+                    self.current = None
+
+                    self.current_encoded = None
+
+                    cooldown = 10
+
+                    start_position = 0
+
+                    if ignore_error_log:=event.cause.startswith((
+                            "java.lang.IllegalStateException: Failed to get media URL: 2000: An error occurred while decoding track token",
+                            "java.net.SocketTimeoutException: Connect timed out",
+                            "java.net.SocketTimeoutException: Read timed out",
+                            "java.net.SocketException: Network is unreachable",
+                            "java.net.ConnectException: Connection refused",
+                            "java.lang.IllegalArgumentException: Invalid bitrate",
+                            "java.io.EOFException",
+                            "java.net.UnknownHostException:",
+                            "java.lang.IllegalStateException: Connection pool shut down",
+                            "java.lang.IllegalStateException: Error from decoder",
+                            "java.lang.IllegalStateException: Current position is beyond this element",
+                            "com.sedmelluq.discord.lavaplayer.tools.io.PersistentHttpStream$PersistentHttpException: Not success status code: 403",
+                    )):
+
+                        if not hasattr(self, 'retries_general_errors'):
+                            self.retries_general_errors = {'counter': 6, 'last_node': self.node.identifier,
+                                                           "last_time": disnake.utils.utcnow()}
+
+                        self.queue.appendleft(track)
+
+                        if self.retries_general_errors["counter"] < 1 and self.node.identifier == \
+                                self.retries_general_errors["last_node"] and (
+                                disnake.utils.utcnow() - self.retries_general_errors[
+                            "last_time"]).total_seconds() < 180:
+
+                            try:
+                                self._new_node_task.cancel()
+                            except:
+                                pass
+                            self._new_node_task = self.bot.loop.create_task(
+                                self._wait_for_new_node(ignore_node=self.node))
+                            continue
+
+                        self.retries_general_errors["last_time"] = disnake.utils.utcnow()
+
+                        if self.retries_general_errors['last_node'] == self.node.identifier:
+                            self.retries_general_errors['counter'] -= 1
+                        else:
+                            self.retries_general_errors = {'counter': 6, 'last_node': self.node.identifier,
+                                                           "last_time": disnake.utils.utcnow()}
+
+                        start_position = get_start_pos(self, track)
+
+                        cooldown = 4
+
+                    elif event.cause == "java.lang.InterruptedException":
+                        self.queue.appendleft(track)
+                        try:
+                            self._new_node_task.cancel()
+                        except:
+                            pass
+                        self._new_node_task = self.bot.loop.create_task(self._wait_for_new_node())
+                        await send_report()
+                        continue
+
+                    elif track.source_name == "youtube":
+
+                        self.current = None
+                        self.current_encoded = None
+                        self.native_yt = False
+                        self.queue.appendleft(track)
+
+                        try:
+                            new_node = [n for n in self.bot.music.nodes.values() if n != self.node and n.is_available and "ytsearch" in n.search_providers][0]
+                        except:
+                            new_node = None
+
+                        if new_node:
+                            self.native_yt = True
+                            txt = f"Due to YouTube restrictions on the server `{self.node.identifier}`, the player was moved to the server `{new_node.identifier}`."
+                            if self.controller_mode:
+                                self.set_command_log(txt, emoji="⚠️", controller=True)
+                            elif self.text_channel:
+                                try:
+                                    await self.text_channel.send(embed=disnake.Embed(description=f"-# `⚠️ -` {txt}", color=self.bot.get_color(self.guild.me)), delete_after=10)
+                                except:
+                                    traceback.print_exc()
+                            await asyncio.sleep(5)
+                            await self.change_node(new_node.identifier)
+                            self.locked = False
+                            await self.process_next(start_position=self.position)
+                            await send_report()
+                            continue
+
+                        if not getattr(self, "yt_warn", None):
+                            txt = f"Due to YouTube restrictions on the server `{self.node.identifier}`. During the current session, " \
+                                  "an attempt will be made to find the same song on other music platforms using the name " \
+                                  "of the YouTube songs in the queue (the played song may differ from what was expected " \
+                                  "or even be skipped if no results are found)."
+                            try:
+                                await self.text_channel.send(embed=disnake.Embed(
+                                    description=txt, color=self.bot.get_color(self.guild.me)
+                                ), delete_after=30)
+                            except:
+                                self.set_command_log(text=txt, emoji="⚠️", controller=True)
+                            self.yt_warn = True
+                            await send_report()
+
+                        self.locked = False
+                        await self.process_next(start_position=self.position)
+                        continue
+
+                    elif not track.track_loops:
+                        self.failed_tracks.append(track)
+
+                    elif self.keep_connected and not track.autoplay and len(self.queue) > 15:
+                        self.queue.append(track)
+
+                    if event.cause.startswith((
+                        "com.github.topi314.lavasrc.mirror.TrackNotFoundException: No tracks found in playlist or search result for track",
+                        "com.github.topi314.lavasrc.mirror.TrackNotFoundException: Playlist is empty",
+                        "com.github.topi314.lavasrc.mirror.TrackNotFoundException: No mirror found for track",
+                    )):
+                        embed = disnake.Embed(
+                            description=f"`Skipping the song` [`{track.title}`](<{track.url}>)`. No results were found on other music platforms.`",
+                            color=self.bot.get_color(self.guild.me)
+                        ).set_thumbnail(track.thumb)
+
+                    if isinstance(self.text_channel, disnake.Thread):
+                        send_message_perm = self.text_channel.parent.permissions_for(self.guild.me).send_messages_in_threads
+                    else:
+                        send_message_perm = self.text_channel.permissions_for(self.guild.me).send_messages
+
+                    await send_report()
+
+                    if not ignore_error_log and embed and self.text_channel and send_message_perm:
+                        await self.text_channel.send(embed=embed, delete_after=10)
+
+                    await asyncio.sleep(cooldown)
+
+                    self.locked = False
+                    await self.process_next(start_position=start_position)
+                    continue
+
+                if isinstance(event, wavelink.TrackStuck):
+
+                    try:
+                        self.message_updater_task.cancel()
+                    except:
+                        pass
+
+                    await self.track_end()
+
+                    self.update = False
+
+                    try:
+                        self.set_command_log(text=f"The song [{fix_characters(self.current.single_title, 25)}](<{self.current.uri}>) got stuck.", emoji="⚠️", controller=True)
+                    except:
+                        pass
+
+                    await self.process_next()
+
+                    continue
+
+                print(f"Unknown Wavelink event: {repr(event)}")
+
+            except Exception:
+                traceback.print_exc()
 
     async def channel_cleanup(self):
+
+        if not self.text_channel:
+            return
 
         try:
             parent = self.text_channel.parent
@@ -1209,32 +1224,24 @@ class LavalinkPlayer(wavelink.Player):
                 self.channel_purged = True
                 return
 
-        try:
-            self.last_message_id = int(self.last_message_id)
-        except TypeError:
-            self.channel_purged = True
-            return
-
-        if self.last_message_id != self.text_channel.last_message_id:
-
-            def check_current_message(m: disnake.Message):
-                try:
-                    return m.id == self.message.id
-                except AttributeError:
-                    return True
-
-            if isinstance(self.text_channel, disnake.Thread):
-                check = (lambda m: m.id != self.last_message_id and not not m.pinned and check_current_message(m) and (
-                            not m.is_system() or m.type != disnake.MessageType.channel_name_change))
-            else:
-                check = (lambda m: m.id != self.last_message_id and not m.pinned and check_current_message(m))
-
+        def check_current_message(m: disnake.Message):
             try:
-                await self.text_channel.purge(check=check)
-            except:
-                print(f"Failed to clear channel messages {self.text_channel} [ID: {self.text_channel.id}]:\n"
-                      f"{traceback.format_exc()}")
-                pass
+                return m.id != self.message.id
+            except AttributeError:
+                return True
+
+        if isinstance(self.text_channel, disnake.Thread):
+            check = (lambda m: m.id != self.last_message_id and not not m.pinned and check_current_message(m) and (
+                        not m.is_system() or m.type != disnake.MessageType.channel_name_change))
+        else:
+            check = (lambda m: m.id != self.last_message_id and not m.pinned and  check_current_message(m))
+
+        try:
+            await self.text_channel.purge(check=check)
+        except Exception:
+            print(f"Failed to clear channel messages {self.text_channel} [ID: {self.text_channel.id}]:\n"
+                  f"{traceback.format_exc()}")
+            pass
 
         self.channel_purged = True
 
@@ -1263,7 +1270,7 @@ class LavalinkPlayer(wavelink.Player):
             (self.bot.player_static_skins[self.skin_static]
              if self.static else self.bot.player_skins[self.skin]).setup_features(self)
         except:
-            # linha temporária para resolver possíveis problemas com skins custom criadas por usuarios antes desse commit.
+            # temporary line to resolve possible issues with custom skins created by users before this commit.
             self.auto_update = 0
             self.controller_mode = True
 
@@ -1340,6 +1347,14 @@ class LavalinkPlayer(wavelink.Player):
         elif self.skin_static not in self.bot.pool.player_static_skins:
             self.skin_static = self.bot.pool.default_static_skin
 
+    def start_members_timeout(self, check: bool, force: bool = False, idle_timeout = None):
+        try:
+            self.members_timeout_task.cancel()
+        except:
+            pass
+        self.members_timeout_task = self.bot.loop.create_task(self.members_timeout(check=check, force=force,
+                                                                                   idle_timeout=idle_timeout))
+
     async def members_timeout(self, check: bool, force: bool = False, idle_timeout = None):
 
         if check:
@@ -1348,6 +1363,7 @@ class LavalinkPlayer(wavelink.Player):
                 self.auto_skip_track_task.cancel()
             except:
                 pass
+
             self.auto_skip_track_task = None
 
             if self.current and self.auto_pause:
@@ -1355,21 +1371,10 @@ class LavalinkPlayer(wavelink.Player):
                 self.auto_pause = False
 
                 try:
-                    self.set_command_log(emoji="🔋", text="The **[resource saving]** mode has been deactivated.")
-                    await self.resolve_track(self.current)
-                    if self.current.id:
-                        if self.current.info["sourceName"] == "youtube" and not self.native_yt:
-                            stream = self.current.is_stream
-                            self.queue.appendleft(self.current)
-                            self.current = None
-                            await self.process_next(start_position=0 if stream else self.position)
-                        else:
-                            await self.play(self.current, start=0 if self.current.is_stream else self.position)
-                            await asyncio.sleep(1.5)
-                            await self.invoke_np(rpc_update=True)
-                            await self.update_stage_topic()
-                    else:
-                        await self.process_next()
+                    self.set_command_log(emoji="🔋", text="The **[resource saving]** mode has been deactivated.", controller=True)
+                    if self.current:
+                        self.queue.insert(0, self.current)
+                    await self.process_next(start_position=self.position)
                 except Exception:
                     traceback.print_exc()
             else:
@@ -1383,7 +1388,7 @@ class LavalinkPlayer(wavelink.Player):
             except AttributeError:
                 vc = self.last_channel
 
-            if [m for m in vc.members if not m.bot and not (m.voice.deaf or m.voice.self_deaf)]:
+            if vc and [m for m in vc.members if not m.bot and not (m.voice.deaf or m.voice.self_deaf)]:
                 try:
                     self.auto_skip_track_task.cancel()
                 except:
@@ -1398,7 +1403,12 @@ class LavalinkPlayer(wavelink.Player):
 
             await asyncio.sleep(idle_timeout)
 
-            if [m for m in vc.members if not m.bot and not (m.voice.deaf or m.voice.self_deaf)]:
+            try:
+                vc = self.guild.me.voice.channel
+            except AttributeError:
+                vc = self.last_channel
+
+            if vc and [m for m in vc.members if not m.bot and not (m.voice.deaf or m.voice.self_deaf)]:
                 try:
                     self.auto_skip_track_task.cancel()
                 except:
@@ -1422,7 +1432,7 @@ class LavalinkPlayer(wavelink.Player):
             self.set_command_log(
                 emoji="🪫",
                 text="The player is in **[resource saving]** mode (this mode will be automatically deactivated when "
-                     f"a member joins the channel <#{self.channel_id}>)."
+                     f"a member joins the channel <#{self.channel_id}>).", controller=True
             )
             self.update = True
             self.start_auto_skip()
@@ -1433,12 +1443,21 @@ class LavalinkPlayer(wavelink.Player):
             if self.is_closing:
                 return
 
-            msg = "**The Player stopped as there were no members in the channel" + (f" <#{self.guild.me.voice.channel.id}>"
-                                                                               if self.guild.me.voice else '') + "...**"
+            try:
+                vc = self.guild.me.voice.channel
+            except AttributeError:
+                vc = self.last_channel
+
+            if vc and [m for m in vc.members if not m.bot]:
+                return
+
+            msg = "The player was disconnected due to lack of members in the channel" + (f" <#{vc.id}>" if vc else '') + "..."
+
             self.command_log = msg
-            if not self.static and not self.has_thread:
+
+            if not self.controller_mode:
                 embed = disnake.Embed(
-                    description=msg, color=self.bot.get_color(self.guild.me))
+                    description=f"**{msg}**", color=self.bot.get_color(self.guild.me))
                 try:
                     await self.text_channel.send(embed=embed, allowed_mentions=self.allowed_mentions)
                 except:
@@ -1481,16 +1500,15 @@ class LavalinkPlayer(wavelink.Player):
             for track_data in tracks_search:
 
                 if track_data.info["sourceName"] == "spotify" and "spotify" not in self.node.info["sourceManagers"] and self.bot.spotify:
-                    track_ids = list(set(t.identifier for t in tracks_search if t.info["sourceName"] == "spotify"))[:5]
 
                     result = None
 
                     for i in range(3):
                         try:
-                            result = await self.bot.spotify.get_recommendations(track_ids)
+                            result = await self.bot.spotify.track_search(tracks_search[0].author, limit=100)
                             break
                         except Exception as e:
-                            self.set_command_log(emoji="⚠️", text=f"Failed to retrieve recommended songs from Spotify, attempt {i+1} of 3.")
+                            self.set_command_log(emoji="⚠️", text=f"Failed to retrieve recommended songs from Spotify, attempt {i+1} of 3.", controller=True)
                             self.update = True
                             traceback.print_exc()
                             exception = e
@@ -1581,6 +1599,23 @@ class LavalinkPlayer(wavelink.Player):
                     except Exception:
                         traceback.print_exc()
 
+                elif track_data.info["sourceName"] == "soundcloud":
+                    try:
+                        info = await self.bot.loop.run_in_executor(None, lambda: self.bot.pool.ytdl.extract_info(f"{track_data.uri}/recommended",
+                                                                                                            download=False))
+                    except AttributeError:
+                        pass
+
+                    else:
+                        tracks = [PartialTrack(
+                            uri=i["url"],
+                            title=i["title"],
+                            requester=self.bot.user.id,
+                            source_name="soundcloud",
+                            identifier=i["id"],
+                            autoplay=True,
+                        ) for i in info.get('entries', [])]
+
                 if not tracks:
 
                     if self.bot.last_fm and not self.lastfm_artists:
@@ -1601,6 +1636,8 @@ class LavalinkPlayer(wavelink.Player):
                             self.lastfm_artists = [a['name'] for a in
                                                    await self.bot.last_fm.get_similar_artists(artist) if a['name'].lower() not in track_data.author.lower()]
                             self.lastfm_artists.insert(0, track_data.author)
+                        except LastFmException as e:
+                            print(f"Last.FM recommendations error: {repr(e)}")
                         except:
                             traceback.print_exc()
 
@@ -1608,8 +1645,9 @@ class LavalinkPlayer(wavelink.Player):
                         author = self.lastfm_artists.pop(0)
                     except:
                         author = track_data.author
-
+                        
                     if track_data.info["sourceName"] == "youtube" and self.native_yt:
+
                         queries = [f"https://www.youtube.com/watch?v={track_data.ytid}&list=RD{track_data.ytid}"]
 
                         if p_dict:=providers_dict.get(track_data.info["sourceName"]):
@@ -1619,8 +1657,11 @@ class LavalinkPlayer(wavelink.Player):
 
                         queries.extend([f"{sp}:{author.split(',')[0]}" for sp in providers])
 
-                    elif track_data.info["sourceName"] == "spotify" and "spotfy" in self.node.info["sourceManagers"]:
-                        queries = ["sprec:seed_tracks=" + ",".join(list(set(t.identifier for t in tracks_search if t.info["sourceName"] == "spotify"))[:5])]
+                    #elif track_data.info["sourceName"] == "spotify" and "spotify" in self.node.info["sourceManagers"] and (spotify_tracks:=[t.identifier for t in tracks_search if t.info["sourceName"] == "spotify"]):
+                    #    queries = ["sprec:seed_tracks=" + ",".join(set(spotify_tracks[:5]))]
+
+                    elif track_data.info["sourceName"] == "deezer" and "deezer" in self.node.info["sourceManagers"] and (deezer_tracks:=[t.identifier for t in tracks_search if t.info["sourceName"] == "deezer"]):
+                        queries = [f"dzrec:{deezer_tracks[0]}"]
 
                     else:
                         if p_dict:=providers_dict.get(track_data.info["sourceName"]):
@@ -1733,8 +1774,8 @@ class LavalinkPlayer(wavelink.Player):
                 if t.is_stream:
                     continue
 
-                if t.duration < 90000:
-                    continue
+                #if t.duration < 90000:
+                #    continue
 
                 if track.ytid and track.ytid == t.ytid:
                     continue
@@ -1769,8 +1810,17 @@ class LavalinkPlayer(wavelink.Player):
     async def process_next(self, start_position: Union[int, float] = 0, inter: disnake.MessageInteraction = None,
                            force_np=False):
 
+        try:
+            self.lyric_task.cancel()
+        except:
+            pass
+
         if self.locked or self.is_closing:
             return
+
+        self.has_lyrics = False
+
+        self.lyric_embed = None
 
         if not self.node or not self.node.is_available:
             try:
@@ -1780,106 +1830,259 @@ class LavalinkPlayer(wavelink.Player):
             self._new_node_task = self.bot.loop.create_task(self._wait_for_new_node())
             return
 
-        await self.bot.wait_until_ready()
-
-        if not self.is_connected:
-            return
-
-        if not self.guild.me.voice:
-            if self.last_channel:
-                await self.connect(self.last_channel.id)
-            else:
-                return
-
-        if not self.channel_purged and self.static and self.text_channel:
-            data = await self.bot.get_data(self.guild_id, db_name=DBModel.guilds)
-            if data["player_controller"]["channel"] == str(self.text_channel.id):
-                await self.channel_cleanup()
-            else:
-                self.channel_purged = True
-
         try:
-            self.idle_task.cancel()
-            self.idle_task = None
+            self.track_load_task.cancel()
         except:
             pass
+        self.track_load_task = self.bot.loop.create_task(self._process_next(start_position=start_position, inter=inter,
+                                                                            force_np=force_np))
+
+    async def _process_next(self, start_position: Union[int, float] = 0, inter: disnake.MessageInteraction = None,
+                           force_np=False):
 
         try:
-            track = self.queue.popleft()
+            await self.bot.wait_until_ready()
 
-        except:
+            if not self.is_connected:
+                return
 
-            try:
-
-                track = None
-
-                if self.autoplay or self.keep_connected:
-                    try:
-                        track = await self.get_autoqueue_tracks()
-                    except:
-                        traceback.print_exc()
-                        self.locked = False
-                        await asyncio.sleep(60)
-                        if not self.current and (self.autoplay or self.keep_connected):
-                            await self.process_next()
-                        return
-
-                if not track:
-                    await self.stop()
-                    self.idle_endtime = disnake.utils.utcnow() + datetime.timedelta(seconds=self.bot.config["IDLE_TIMEOUT"])
-                    self.last_track = None
-                    self.idle_task = self.bot.loop.create_task(self.idling_mode())
-                    self.bot.dispatch("player_queue_end", player=self)
+            if not self.guild.me.voice:
+                if self.last_channel:
+                    await self.connect(self.last_channel.id)
+                else:
                     return
 
-            except Exception:
-                traceback.print_exc()
-                track = None
+            if not self.channel_purged and self.static and self.text_channel:
+                data = await self.bot.get_data(self.guild_id, db_name=DBModel.guilds)
+                if data["player_controller"]["channel"] == str(self.text_channel.id):
+                    await self.channel_cleanup()
+                else:
+                    self.channel_purged = True
 
-        if not track:
-            await self.process_next()
-            return
+            try:
+                self.idle_task.cancel()
+            except:
+                pass
 
-        self.locked = True
+            if not self.controller_mode and self.idle_task:
+                await self.message.delete()
 
-        if not self.auto_pause:
+            self.idle_task = None
 
-            if track.info["sourceName"] not in self.node.info["sourceManagers"] and not isinstance(track, PartialTrack):
-                track.id = ""
+            try:
+                track = self.queue.popleft()
 
-            if isinstance(track, PartialTrack):
+            except:
 
-                if not track.id:
-                    try:
-                        await self.resolve_track(track)
-                    except Exception as e:
+                try:
+
+                    track = None
+
+                    if self.autoplay or self.keep_connected:
                         try:
-                            await self.text_channel.send(
-                                embed=disnake.Embed(
-                                    description=f"There was a problem trying to process the music [{track.title}]({track.uri})... "
-                                                f"```py\n{repr(e)}```",
-                                    color=self.bot.get_color()
-                                )
-                            )
+                            track = await self.get_autoqueue_tracks()
                         except:
-                            traceback.print_exc()
+                            print(traceback.format_exc())
+                            self.locked = False
+                            await asyncio.sleep(60)
+                            if not self.current and (self.autoplay or self.keep_connected):
+                                await self.process_next()
+                            return
 
-                        self.locked = False
-
-                        await self.process_next()
+                    if not track:
+                        await self.stop()
+                        now = disnake.utils.utcnow()
+                        self.idle_start_timestamp = int(now.timestamp())
+                        self.idle_endtime = now + datetime.timedelta(seconds=self.bot.config["IDLE_TIMEOUT"])
+                        self.last_track = None
+                        self.idle_task = self.bot.loop.create_task(self.idling_mode())
+                        self.bot.dispatch("player_queue_end", player=self)
                         return
+
+                except Exception:
+                    print(traceback.format_exc())
+                    track = None
+
+            if not track:
+                await self.process_next()
+                return
+
+            self.locked = True
+
+            encoded_track = None
+
+            if not self.auto_pause:
+
+                if track.info["sourceName"] not in self.node.info["sourceManagers"] and not isinstance(track, PartialTrack):
+                    track.id = ""
+
+                if isinstance(track, PartialTrack) and track.info["sourceName"] != "youtube":
+
+                    if not track.id:
+                        try:
+                            await self.resolve_track(track)
+                        except Exception as e:
+                            try:
+                                await self.text_channel.send(
+                                    embed=disnake.Embed(
+                                        description=f"There was a problem trying to process the song [{track.title}]({track.uri})... "
+                                                    f"```py\n{repr(e)}```",
+                                        color=self.bot.get_color()
+                                    )
+                                )
+                            except:
+                                print(traceback.format_exc())
+
+                            self.locked = False
+                            self.native_yt = True
+
+                            await self.process_next()
+                            return
+
+                        if not track.id:
+                            try:
+                                await self.text_channel.send(
+                                    embed=disnake.Embed(
+                                        description=f"The song [{track.title}]({track.uri}) is not available...\n"
+                                                    f"Skipping to the next song...",
+                                        color=self.bot.get_color()
+                                    ), delete_after=10
+                                )
+                            except:
+                                print(traceback.format_exc())
+
+                            await asyncio.sleep(10)
+
+                            self.locked = False
+
+                            await self.process_next()
+                            return
+
+                if not self.native_yt or not self.node.prefer_youtube_native_playback:
+
+                    cache_key = f"{track.info['sourceName']}:id:{track.identifier or track.id or track.ytid}"
+
+                    partial_data = self.bot.pool.partial_track_cache.get(cache_key)
+
+                    if track.info["sourceName"] == "youtube" or (partial_data and partial_data[0].info["sourceName"] == "youtube"):
+
+                        if (track.is_stream or track.duration > 480000):
+                            if not self.native_yt:
+                                self.played.append(track)
+                                self.locked = False
+                                self.native_yt = True
+                                await self.process_next()
+                                return
+
+                            try:
+                                encoded_track = partial_data[0].id
+                            except:
+                                pass
+
+                        else:
+                            tracks = []
+
+                            exceptions = ""
+
+                            if not partial_data:
+
+                                for provider in self.node.search_providers:
+
+                                    if provider in ("ytsearch", "ytmsearch"):
+                                        continue
+
+                                    if track.author.endswith(" - topic"):
+                                        query = f"{provider}:{track.title} - {track.author[:-8]}"
+                                    else:
+                                        query = f"{provider}:{track.title}"
+
+                                    tracks = self.bot.pool.partial_track_cache.get(query)
+
+                                    if not tracks:
+
+                                        try:
+                                            tracks = await self.node.get_tracks(
+                                                query, track_cls=LavalinkTrack, playlist_cls=LavalinkPlaylist
+                                            )
+                                        except:
+                                            exceptions += f"{traceback.format_exc()}\n"
+                                            await asyncio.sleep(1)
+                                            continue
+
+                                        try:
+                                            tracks = tracks.tracks
+                                        except AttributeError:
+                                            pass
+
+                                        self.bot.pool.partial_track_cache[query] = tracks
+
+                                    if not [i in track.title.lower() for i in exclude_tags]:
+                                        final_result = []
+                                        for t in tracks:
+                                            if not any((i in t.title.lower()) for i in exclude_tags):
+                                                final_result.append(t)
+                                                break
+                                        tracks = final_result or tracks
+
+                                    min_duration = track.duration - 7000
+                                    max_duration = track.duration + 7000
+
+                                    final_result = []
+
+                                    for t in tracks:
+                                        if t.is_stream or not min_duration < t.duration < max_duration and fuzz.token_sort_ratio(t.title, track.title) < 75:
+                                            continue
+                                        final_result.append(t)
+
+                                    if not final_result:
+                                        continue
+
+                                    tracks = final_result
+                                    break
+
+                            else:
+                                tracks = partial_data
+
+                            if not tracks:
+
+                                if not self.native_yt:
+
+                                    if exceptions:
+                                        print(exceptions)
+                                    self.played.append(track)
+                                    self.set_command_log(emoji="⚠️", text=f"The song [`{track.title[:15]}`](<{track.uri}>) will be skipped due to lack of results "
+                                                                          "on other music platforms.", controller=True)
+                                    await asyncio.sleep(3)
+                                    self.locked = False
+                                    self.native_yt = True
+                                    await self.process_next()
+                                    return
+
+                            else:
+                                alt_track = tracks[0]
+                                encoded_track = alt_track.id
+                                self.bot.pool.partial_track_cache[cache_key] = [alt_track]
+                                self.set_command_log(
+                                    emoji="▶️",
+                                    text=f"Playing song obtained via metadata: [`{fix_characters(alt_track.title, 20)}`](<{alt_track.uri}>) `| By: {fix_characters(alt_track.author, 15)}`", controller=True
+                                )
+                                self.native_yt = True
+
+                if not encoded_track and not track.id:
+
+                    await self.resolve_track(track)
 
                     if not track.id:
                         try:
                             await self.text_channel.send(
                                 embed=disnake.Embed(
                                     description=f"The song [{track.title}]({track.uri}) is not available...\n"
-                                                f"Skipping to the next song...",
+                                                "Skipping to the next song...",
                                     color=self.bot.get_color()
                                 ), delete_after=10
                             )
                         except:
-                            traceback.print_exc()
+                            print(traceback.format_exc())
 
                         await asyncio.sleep(10)
 
@@ -1888,143 +2091,146 @@ class LavalinkPlayer(wavelink.Player):
                         await self.process_next()
                         return
 
-            if not self.native_yt and (track.info["sourceName"] == "youtube" or track.info.get("sourceNameOrig") == "youtube"):
+            self.last_track = track
 
-                if track.is_stream or track.duration > 480000:
-                    self.failed_tracks.append(track)
-                    self.locked = False
-                    await self.process_next()
-                    return
+            self.is_previows_music = False
 
-                tracks = []
+            self.locked = False
 
-                exceptions = ""
+            if track.is_stream:
+                start_position = 0
 
-                if not track.temp_id:
+            self.current = track
+            self.last_update = 0
+            self.last_position = start_position
+            self.position_timestamp = 0
+            self.paused = False
 
-                    for provider in self.node.search_providers:
+            self.process_hint()
 
-                        if provider in ("ytsearch", "ytmsearch"):
-                            continue
+            self.start_time = disnake.utils.utcnow()
+            self.start_timestamp = self.start_time.timestamp()
 
-                        if track.author.endswith(" - topic"):
-                            query = f"{provider}:{track.title} - {track.author[:-8]}"
-                        else:
-                            query = f"{provider}:{track.title}"
+            if self.auto_pause:
+                self.last_update = time() * 1000
+                self.current = track
+                self.current_encoded = None
+                self.start_auto_skip()
+                self.bot.loop.create_task(self.node.on_event(TrackStart({"track": track, "player": self,"node": self.node})))
+                self.set_command_log(
+                    emoji="🪫",
+                    text="The player is in **[resource saving]** mode (this mode will be automatically deactivated when "
+                         f"a member joins the channel <#{self.channel_id}>).", controller=True
+                )
+            else:
+                await self.play(track, start=start_position, temp_id=encoded_track)
 
-                        try:
-                            tracks = await self.node.get_tracks(query, track_cls=LavalinkTrack, playlist_cls=LavalinkPlaylist)
-                        except:
-                            exceptions += f"{traceback.format_exc()}\n"
-                            await asyncio.sleep(1)
-                            continue
+            # TODO: review this part if adding a function to enable track loops on songs in the queue
+            if self.loop != "current" or force_np or (not self.controller_mode and self.current.track_loops == 0):
 
-                    try:
-                        tracks = tracks.tracks
-                    except AttributeError:
-                        pass
+                if start_position:
+                    await asyncio.sleep(1)
 
-                    if not [i in track.title.lower() for i in exclude_tags]:
-                        final_result = []
-                        for t in tracks:
-                            if not any((i in t.title.lower()) for i in exclude_tags):
-                                final_result.append(t)
-                                break
-                        tracks = final_result or tracks
+                await self.invoke_np(
+                    interaction=inter,
+                    force=True if (self.static or not self.loop or not self.is_last_message()) else False,
+                    rpc_update=True
+                )
+        except Exception as e:
+            print(traceback.format_exc())
 
-                    min_duration = track.duration - 7000
-                    max_duration = track.duration + 7000
+            embed = disnake.Embed(
+                description="**An error occurred while playing the song:**"
+            )
 
-                    final_result = []
+            if self.current:
+                embed.description += f" [`{self.current.title}`]({self.current.uri})"
 
-                    for t in tracks:
-                        if t.is_stream or not min_duration < t.duration < max_duration:
-                            continue
-                        final_result.append(t)
+            embed.description += f" ```py\n{repr(e)}```"
 
-                    if not (tracks:=final_result):
-                        if exceptions:
-                            print(exceptions)
-                        self.failed_tracks.append(track)
-                        self.set_command_log(emoji="⚠️", text=f"The song [`{track.title[:15]}`](<{track.uri}>) will be skipped due to "
-                                                              "lack of result from other platform.")
-                        await self.invoke_np()
-                        await asyncio.sleep(13)
-                        self.locked = False
-                        await self.process_next()
-                        return
+            if self.text_channel:
+                try:
+                    await self.text_channel.send(embed=embed, delete_after=15)
+                except Exception:
+                    print(traceback.format_exc())
 
-                    alt_track = tracks[0]
-                    track.temp_id = alt_track.id
-                    self.set_command_log(
-                        emoji="▶️",
-                        text=f"Playing music obtained via metadata: [`{fix_characters(alt_track.title, 20)}`](<{alt_track.uri}>) `| By: {fix_characters(alt_track.author, 15)}`"
+            cog = self.bot.get_cog("ErrorHandler")
+            if cog:
+                embed.add_field(name="Servidor:", value=f"{self.guild.name} [{self.guild.id}]")
+                try:
+                    await cog.send_webhook(
+                        embed=embed,
+                        file=string_to_file("".join(traceback.format_exception(type(e), e, e.__traceback__)),
+                                            "error_traceback_ytdl.txt")
                     )
+                except Exception:
+                    print(traceback.format_exc())
+            await asyncio.sleep(10)
+            self.locked = False
+            await self.process_next()
 
-            elif not track.id:
+    async def play(self, track: Union[LavalinkTrack], *, replace: bool = True, start: int = 0, end: int = 0, **kwargs):
 
-                await self.resolve_track(track)
-
-                if not track.id:
-                    try:
-                        await self.text_channel.send(
-                            embed=disnake.Embed(
-                                description=f"The song [{track.title}]({track.uri}) is not available...\n"
-                                            "Skipping to the next song...",
-                                color=self.bot.get_color()
-                            ), delete_after=10
-                        )
-                    except:
-                        traceback.print_exc()
-
-                    await asyncio.sleep(10)
-
-                    self.locked = False
-
-                    await self.process_next()
-                    return
-
-        self.last_track = track
-
-        self.is_previows_music = False
-
-        self.locked = False
-
-        if track.is_stream:
-            start_position = 0
+        if replace or not self.is_playing:
+            self.last_update = 0
+            self.last_position = 0
+            self.position_timestamp = 0
+            self.paused = False
+        else:
+            return
 
         self.current = track
-        self.last_update = 0
-        self.last_position = start_position
-        self.position_timestamp = 0
-        self.paused = False
 
-        self.process_hint()
+        self.current_encoded = kwargs.pop("temp_id", None) or track.id
 
-        if self.auto_pause:
-            self.last_update = time() * 1000
-            self.current = track
-            self.start_auto_skip()
-            self.bot.loop.create_task(self.node.on_event(TrackStart({"track": track, "player": self,"node": self.node})))
-            self.set_command_log(
-                emoji="🪫",
-                text="The player is in **[resource saving]** mode (this mode will be automatically deactivated when "
-                     f"a member joins the channel <#{self.channel_id}>)."
-            )
+        if self.node.version == 3:
+
+            payload = {
+                'op': 'play',
+                'guildId': str(self.guild_id),
+                'track': self.current_encoded,
+                'noReplace': not replace,
+                'startTime': start,
+            }
+
+            payload.update(kwargs)
+
+            if end > 0:
+                payload['endTime'] = str(end)
+
+            await self.node._send(**payload, **kwargs)
         else:
-            await self.play(track, start=start_position, temp_id=track.temp_id)
 
-        # TODO: rever essa parte caso adicione função de ativar track loops em músicas da fila
-        if self.loop != "current" or force_np or (not self.controller_mode and self.current.track_loops == 0):
+            vol: int = kwargs.get('volume') or self.volume
 
-            if start_position:
-                await asyncio.sleep(1)
+            if vol != self.volume:
+                self.volume = vol
 
-            await self.invoke_np(
-                interaction=inter,
-                force=True if (self.static or not self.loop or not self.is_last_message()) else False,
-                rpc_update=True
-            )
+            pause: bool
+
+            if (p := kwargs.get("paused")) is not None:
+                pause = p
+            else:
+                pause = self.paused
+
+            payload = {
+                "encodedTrack": self.current_encoded,
+                "volume": vol,
+                "position": int(start),
+                "paused": pause,
+                "filters": self.filters,
+            }
+
+            if end > 0:
+                payload['endTime'] = str(end)
+
+            if track.source_name == "youtube":
+                try:
+                    payload["userData"] = {"oauth-token": self.extra_info["guild-yt-oauth"][0]}
+                except KeyError:
+                    pass
+
+            await self.node.update_player(self.guild_id, payload, replace)
 
     async def process_idle_message(self):
 
@@ -2032,10 +2238,6 @@ class LavalinkPlayer(wavelink.Player):
             disnake.SelectOption(
                 emoji="<:add_music:588172015760965654>", value=PlayerControls.add_song, label="Add song",
                 description=f"Play a new song/playlist."
-            ),
-            disnake.SelectOption(
-                emoji="⭐", value=PlayerControls.enqueue_fav, label="Add favorite",
-                description=f"Add favorite to the queue."
             ),
         ]
 
@@ -2078,7 +2280,7 @@ class LavalinkPlayer(wavelink.Player):
         components = [
             disnake.ui.Select(
                 placeholder="Perform an action:", options=controller_opts,
-                custom_id="musicplayer_dropdown_idle", min_values=0, max_values=1
+                custom_id="musicplayer_dropdown_idle", min_values=0, max_values=1, required = False
             )
         ]
 
@@ -2125,8 +2327,8 @@ class LavalinkPlayer(wavelink.Player):
                 try:
                     await self.message.edit(**kwargs)
                 except:
-                    traceback.print_exc()
-                    if self.text_channel:
+                    print(traceback.format_exc())
+                    if self.text_channel and not self.static:
                         self.message = await self.text_channel.send(**kwargs)
                 send_message = False
             else:
@@ -2151,12 +2353,12 @@ class LavalinkPlayer(wavelink.Player):
         try:
             await self.process_rpc(vc)
         except:
-            traceback.print_exc()
+            print(traceback.format_exc())
 
         try:
             await self.process_idle_message()
         except:
-            traceback.print_exc()
+            print(traceback.format_exc())
 
         try:
             await self.update_stage_topic()
@@ -2180,13 +2382,16 @@ class LavalinkPlayer(wavelink.Player):
                     self.bot.loop.create_task(self.text_channel.send(
                         embed=embed, delete_after=120, allowed_mentions=self.allowed_mentions))
         except:
-            traceback.print_exc()
+            print(traceback.format_exc())
 
         await self.destroy()
 
-    def set_command_log(self, text="", emoji=""):
-        self.command_log = text
-        self.command_log_emoji = emoji
+    def set_command_log(self, text="", emoji="", controller=False):
+        if controller or not text:
+            self.command_log = text
+            self.command_log_emoji = emoji
+        else:
+            self.command_log_list.append({"text": text, "emoji": emoji, "timestamp": disnake.utils.utcnow().timestamp()})
 
     async def update_stage_topic(self, reconnect=True, clear=False):
 
@@ -2277,7 +2482,7 @@ class LavalinkPlayer(wavelink.Player):
             except Exception as e:
                 if isinstance(e, disnake.Forbidden):
                     self.stage_title_event = False
-                    self.set_command_log(emoji="❌", text="The automatic status has been deactivated due to a lack of permission to change status.")
+                    self.set_command_log(emoji="❌", text="The automatic status has been deactivated due to a lack of permission to change status.", controller=True)
                     self.update = True
                 print(traceback.format_exc())
 
@@ -2291,6 +2496,9 @@ class LavalinkPlayer(wavelink.Player):
         self.message_updater_task = self.bot.loop.create_task(self.message_updater())
 
     async def invoke_np(self, force=False, interaction=None, rpc_update=False):
+
+        if self.is_closing:
+            return
 
         if not self.text_channel:
             try:
@@ -2317,6 +2525,9 @@ class LavalinkPlayer(wavelink.Player):
                     await interaction.response.defer()
             except:
                 pass
+            return
+
+        if self.has_lyrics:
             return
 
         if rpc_update:
@@ -2357,11 +2568,12 @@ class LavalinkPlayer(wavelink.Player):
 
         self.last_data = data
 
-        try:
-            if self.static and isinstance(self.text_channel.parent, disnake.ForumChannel):
-                data["content"] = f"`{'▶️' if not self.paused else '⏸️'} {fix_characters(self.current.title, 50)}` |\n\n" + (data.get("content") or "")
-        except:
-            pass
+        if not data.get("flags"):
+            try:
+                if self.static and isinstance(self.text_channel.parent, disnake.ForumChannel):
+                    data["content"] = f"`{'▶️' if not self.paused else '⏸️'} {fix_characters(self.current.title, 50)}` |\n\n" + (data.get("content") or "")
+            except:
+                pass
 
         if not self.controller_mode:
 
@@ -2398,7 +2610,7 @@ class LavalinkPlayer(wavelink.Player):
 
         else:
 
-            # nenhum controle de botão foi definido na skin (será usado os botões padrões).
+            # no button controls were defined in the skin (default buttons will be used).
             if data.get("components") is None:
 
                 # Warning: Do not modify the components below, prefer to copy one of the skins from the utils -> music -> skins folder
@@ -2420,17 +2632,12 @@ class LavalinkPlayer(wavelink.Player):
                     disnake.ui.Select(
                         placeholder="More options:",
                         custom_id="musicplayer_dropdown_inter",
-                        min_values=0, max_values=1,
+                        min_values=0, max_values=1, required = False,
                         options=[
                             disnake.SelectOption(
                                 label="Add song", emoji="<:add_music:588172015760965654>",
                                 value=PlayerControls.add_song,
                                 description="Add a song/playlist to the queue."
-                            ),
-                            disnake.SelectOption(
-                                label="Enqueue favorite", emoji="⭐",
-                                value=PlayerControls.enqueue_fav,
-                                description="Enqueue one of your favorites."
                             ),
                             disnake.SelectOption(
                                 label="Add to favorites", emoji="💗",
@@ -2474,6 +2681,11 @@ class LavalinkPlayer(wavelink.Player):
                                 description="Automatic music playback when the queue is empty."
                             ),
                             disnake.SelectOption(
+                                label="Last.fm scrobble", emoji="<:Lastfm:1278883704097341541>",
+                                value=PlayerControls.lastfm_scrobble,
+                                description="Enable/disable scrobble/song tracking on your last.fm account."
+                            ),
+                            disnake.SelectOption(
                                 label=("Disable" if self.restrict_mode else "Enable") + " restricted mode",
                                 emoji="🔐",
                                 value=PlayerControls.restrict_mode,
@@ -2482,6 +2694,23 @@ class LavalinkPlayer(wavelink.Player):
                         ]
                     ),
                 ]
+
+                if self.static:
+                    if (queue := self.queue or self.queue_autoplay):
+                        data["components"].append(
+                            disnake.ui.Select(
+                                placeholder="Upcoming songs:",
+                                custom_id="musicplayer_queue_dropdown",
+                                min_values=0, max_values=1, required = False,
+                                options=[
+                                    disnake.SelectOption(
+                                        label=fix_characters(f"{n + 1}. {t.single_title}", 47),
+                                        description=fix_characters(f"[{time_format(t.duration) if not t.is_stream else '🔴 Live'}]. {t.authors_string}", 47),
+                                        value=f"{n:02d}.{t.title[:96]}"
+                                    ) for n, t in enumerate(itertools.islice(queue, 25))
+                                ]
+                            )
+                        )
 
                 if self.current.ytid and self.node.lyric_support:
                     data["components"][5].options.append(
@@ -2522,6 +2751,12 @@ class LavalinkPlayer(wavelink.Player):
             self.updating = True
 
             if interaction:
+
+                try:
+                    del data["flags"]
+                except KeyError:
+                    pass
+
                 try:
                     if interaction.response.is_done():
                         await interaction.message.edit(allowed_mentions=self.allowed_mentions, **data)
@@ -2543,8 +2778,10 @@ class LavalinkPlayer(wavelink.Player):
                     self.ignore_np_once = False
 
                     try:
-
                         try:
+                            if data.get("flags"):
+                                data["content"] = None
+                                data["embed"] = None
                             await self.message.edit(allowed_mentions=self.allowed_mentions, **data)
                             await asyncio.sleep(0.5)
                         except asyncio.CancelledError:
@@ -2552,7 +2789,11 @@ class LavalinkPlayer(wavelink.Player):
                             return
                         except:
                             traceback.print_exc()
-                            self.text_channel = self.bot.get_channel(self.text_channel.id)
+
+                            try:
+                                self.text_channel = self.bot.get_channel(self.text_channel.id) or await self.bot.fetch_channel(self.text_channel.id)
+                            except (AttributeError, disnake.Forbidden, disnake.HTTPException):
+                                self.text_channel = None
 
                             if not self.text_channel:
                                 self.message = None
@@ -2563,6 +2804,7 @@ class LavalinkPlayer(wavelink.Player):
                                 if not self.text_channel.parent.permissions_for(
                                         self.guild.me).send_messages_in_threads or not self.text_channel.permissions_for(
                                         self.guild.me).read_messages:
+                                    self.text_channel = None
                                     return
 
                                 if self.text_channel.locked:
@@ -2581,10 +2823,13 @@ class LavalinkPlayer(wavelink.Player):
                                     else:
                                         await self.text_channel.send("Unarchiving the topic.", delete_after=2)
 
+                                await self.message.edit(allowed_mentions=self.allowed_mentions, **data)
+                                await asyncio.sleep(0.5)
+
                                 #elif ((
                                 #              self.text_channel.archive_timestamp - disnake.utils.utcnow()).total_seconds() / 60) < (
                                 #thread_archive_time[self.text_channel.auto_archive_duration]):
-                                #    await self.text_channel.send("Evitando o tópico auto-arquivar...", delete_after=2)
+                                #    await self.text_channel.send("Preventing the thread from auto-archiving...", delete_after=2)
 
                             elif not self.text_channel.permissions_for(
                                     self.guild.me).send_messages or not self.text_channel.permissions_for(
@@ -2596,11 +2841,11 @@ class LavalinkPlayer(wavelink.Player):
                         return
                     except Exception as e:
                         self.updating = False
-                        traceback.print_exc()
+                        print(traceback.format_exc())
                         if self.static or self.has_thread:
                             self.set_command_log(
-                                f"{(interaction.author.mention + ' ') if interaction else ''}There was an error in the interaction: {repr(e)}",
-                                "⚠️")
+                                f"{(interaction.author.mention + ' ') if interaction else ''}there was an error in the interaction: {repr(e)}",
+                                "⚠️", controller=True)
                             self.update = True
                             return
 
@@ -2627,6 +2872,8 @@ class LavalinkPlayer(wavelink.Player):
 
     async def set_pause(self, pause: bool) -> None:
         await super().set_pause(pause)
+        self.start_timestamp = (disnake.utils.utcnow() - datetime.timedelta(milliseconds=self.position)).timestamp()
+        self.bot.dispatch("player_pause" if pause else "player_resume", player=self)
 
     async def destroy_message(self):
 
@@ -2690,15 +2937,48 @@ class LavalinkPlayer(wavelink.Player):
             await self.process_rpc()
 
         if force or (interaction and not interaction.response.is_done()):
-            if self.controller_mode:
+            if self.controller_mode or interaction:
                 await self.invoke_np(interaction=interaction)
 
         else:
             self.update = True
 
+    def get_skin(self, disable=False):
+
+        if not self.current:
+            return
+
+        if self.static:
+
+            if self.skin_static.startswith("> custom_skin: "):
+                data = skin_converter(self.custom_skin_static_data[self.skin_static[15:]], player=self,
+                                      guild=self.guild)
+            else:
+                data = self.bot.pool.player_static_skins[self.skin_static].load(self)
+
+        else:
+            if self.skin.startswith("> custom_skin: "):
+                data = skin_converter(self.custom_skin_data[self.skin[15:]], player=self,
+                                      guild=self.guild)
+            else:
+                data = self.bot.pool.player_skins[self.skin].load(self)
+
+        if disable:
+
+            data = self.get_skin()
+
+            components = []
+
+            for c in data.get("components", []):
+                c.disabled = True
+                components.append(c)
+
+            data["components"] = components
+
+        return data
+
     async def cleanup(self, inter: disnake.MessageInteraction = None):
 
-        self.queue.clear()
         self.played.clear()
 
         try:
@@ -2722,23 +3002,36 @@ class LavalinkPlayer(wavelink.Player):
             pass
 
         try:
-            self.hook_event_task.cancel()
+            self.message_updater_task.cancel()
         except:
             pass
+        self.message_updater_task = None
 
         try:
-            vc = self.guild.voice_client.channel
+            self._new_node_task.cancel()
         except:
-            vc = self.last_channel
+            pass
+        self._new_node_task = None
 
         try:
-            await self.process_rpc(vc, close=True)
+            self.idle_task.cancel()
         except:
-            traceback.print_exc()
+            pass
+        self.idle_task = None
 
         if self.guild.me:
 
             self.bot.loop.create_task(self.update_stage_topic(reconnect=False, clear=True))
+
+            try:
+                vc = self.guild.voice_client.channel
+            except:
+                vc = self.last_channel
+
+            try:
+                await self.process_rpc(vc, close=True)
+            except:
+                traceback.print_exc()
 
             if self.static:
 
@@ -2748,12 +3041,12 @@ class LavalinkPlayer(wavelink.Player):
                     traceback.print_exc()
                     pass
 
-                #await self.channel_cleanup()
+                await self.channel_cleanup()
 
             else:
 
                 try:
-                    if self.has_thread:
+                    if self.has_thread or self.static:
 
                         try:
                             if inter.message.id == self.message.id:
@@ -2769,11 +3062,13 @@ class LavalinkPlayer(wavelink.Player):
                         if func:
                             try:
                                 await func(
-                                    embed=disnake.Embed(
+                                    allowed_mentions=self.allowed_mentions,
+                                    **self.get_skin(disable=True) if (not self.static and
+                                    (disnake.utils.utcnow() - datetime.datetime.fromtimestamp(
+                                        self.uptime, datetime.timezone.utc)).total_seconds() > 15) else
+                                    {"embed": disnake.Embed(
                                         description=self.command_log,
-                                        color=self.bot.get_color(self.guild.me)
-                                    ), allowed_mentions=self.allowed_mentions,
-                                    components=song_request_buttons
+                                        color=self.bot.get_color(self.guild.me))}
                                 )
                                 channel: disnake.Thread = self.bot.get_channel(self.message.id)
 
@@ -2801,37 +3096,72 @@ class LavalinkPlayer(wavelink.Player):
 
                     elif inter:
 
-                        await inter.response.edit_message(
-                            content=None,
-                            embed=disnake.Embed(
-                                description=f"🛑 ⠂{self.command_log}",
-                                color=self.bot.get_color(self.guild.me)),
-                            components=song_request_buttons
-                        )
+                        kw = {}
 
-                    elif not self.controller_mode:
-                        await self.destroy_message()
+                        if self.lyric_embed and self.message and self.message.components:
+                            self.lyric_embed.description += f"\n🛑 ⠂{self.command_log}"
+
+                            components = []
+
+                            for component in self.message.components:
+                                for item in component.children:
+                                    if isinstance(item, disnake.Button):
+                                        item = disnake.ui.Button().from_component(item)
+                                    elif isinstance(item, disnake.SelectMenu):
+                                        item = disnake.ui.Select().from_component(item)
+                                    item.disabled = True
+                                    components.append(item)
+
+                            kw = {"embed": self.lyric_embed, "components": components}
+
+                        if inter.message.id == self.message.id:
+                            func = inter.response.edit_message
+                            if not kw and (disnake.utils.utcnow() - datetime.datetime.fromtimestamp(self.uptime, datetime.timezone.utc)).total_seconds() > 15:
+                                kw = self.get_skin(disable=True)
+                                try:
+                                    del kw['flags']
+                                except:
+                                    pass
+                        else:
+                            try:
+                                func = self.message.edit
+                            except:
+                                func = None
+
+                        if func:
+
+                            if not kw:
+                                kw = {
+                                    "embed": disnake.Embed(
+                                        description=f"🛑 ⠂{self.command_log}",
+                                        color=self.bot.get_color(self.guild.me)),
+                                    "view": None
+                                }
+
+                            await func(**kw)
+
+                    elif self.controller_mode is True:
+
+                        if not self.current:
+                            await self.destroy_message()
+                            return
+
+                        kw = {}
+
+                        if self.lyric_embed and self.message and self.message.components:
+                            self.lyric_embed.description += f"\n🛑 ⠂{self.command_log}"
+                            kw = {"embed": self.lyric_embed, "components": []}
+
+                            for c in disnake.ui.View(timeout=0).from_message(self.message).children:
+                                c.disabled = True
+                                kw["components"].append(c)
+
+                        await self.message.edit(**kw or self.get_skin(disable=True))
 
                 except Exception:
                     traceback.print_exc()
 
-        try:
-            self.message_updater_task.cancel()
-        except:
-            pass
-        self.message_updater_task = None
-
-        try:
-            self._new_node_task.cancel()
-        except:
-            pass
-        self._new_node_task = None
-
-        try:
-            self.idle_task.cancel()
-        except:
-            pass
-        self.idle_task = None
+        self.queue.clear()
 
     async def auto_skip_track(self):
 
@@ -2860,8 +3190,15 @@ class LavalinkPlayer(wavelink.Player):
                     retries -= 1
                     continue
 
-            await asyncio.sleep(sleep_time or (self.current.duration / 1000))
+            if not sleep_time:
+                if self.current.duration:
+                    sleep_time = self.current.duration / 1000
+                else:
+                    sleep_time = 180
+
+            await asyncio.sleep(sleep_time)
             self.current = None
+            self.current_encoded = None
             self.last_update = 0
             self.bot.loop.create_task(self.node.on_event(TrackEnd({"track": self.current, "player": self, "node": self.node, "reason": "FINISHED"})))
             return
@@ -2873,95 +3210,131 @@ class LavalinkPlayer(wavelink.Player):
             traceback.print_exc()
             return
 
-    async def resolve_track(self, track: PartialTrack):
+    async def resolve_track(self, track: PartialTrack, force=False):
 
         if track.id:
             return
 
-        check_duration = True
+        check_duration = bool(track.duration)
 
         try:
 
             exceptions = []
+            selected_track = None
             tracks = []
 
             if track.info["sourceName"] == "http":
                 search_queries = [track.uri or track.search_uri]
+            elif track.info["sourceName"] == "youtube" and not force and (not self.native_yt or not self.node.prefer_youtube_native_playback):
+                return
             else:
-                if track.info["sourceName"] in self.node.info.get("sourceManagers", []):
+                search_queries = []
+
+            if not search_queries:
+
+                if not force and track.info["sourceName"] in self.node.info.get("sourceManagers", []) and (not self.node.only_use_native_search_providers or track.info["sourceName"] in native_sources):
+
+
+
                     search_queries = [track.uri]
                 else:
                     search_queries = []
                     for sp in self.node.partial_providers:
+
+                        if track.info["sourceName"] == "youtube" and sp.startswith(("ytsearch:", "ytmsearch:")) and not self.native_yt:
+                            continue
+
                         if "{isrc}" in sp:
-                            if isrc:=track.info.get('isrc'):
+                            if isrc := track.info.get('isrc'):
                                 search_queries.append(sp.replace("{isrc}", isrc))
                             continue
                         search_queries.append(sp.replace("{title}", track.single_title).replace("{author}", ", ".join(track.authors)))
 
             for query in search_queries:
 
+                if not (result := self.bot.pool.partial_track_cache.get(f'{track.info["sourceName"]}:{track.author}-{track.single_title}')):
+                    try:
+                        result = (await self.node.get_tracks(query, track_cls=LavalinkTrack, playlist_cls=LavalinkPlaylist, check_title = 60 if query.startswith(("ytmsearch", "ytsearch", "scsearch")) else 75))
+                    except Exception as e:
+                        if track.info["sourceName"] == "youtube" and any(e in str(e) for e in (
+                            "This video is not available",
+                            "YouTube WebM streams are currently not supported.",
+                            "Video returned by YouTube isn't what was requested",
+                            "The video returned is not what was requested.",
+                        )
+                               ):
+                            cog = self.bot.get_cog("Music")
+                            cog.remove_provider(self.node.search_providers, ["ytsearch", "ytmsearch"])
+                            cog.remove_provider(self.node.partial_providers, ["ytsearch:\"{isrc}\"",
+                                                                              "ytsearch:\"{title} - {author}\"",
+                                                                              "ytmsearch:\"{isrc}\"",
+                                                                              "ytmsearch:\"{title} - {author}\"",
+                                                                              ])
+                            self.native_yt = False
+                            await self.resolve_track(track)
+                            return
+                        exceptions.append(e)
+                        continue
+
+                    try:
+                        result = result.tracks
+                    except AttributeError:
+                        pass
+
+                    self.bot.pool.partial_track_cache[f'{track.info["sourceName"]}:{track.author}-{track.single_title}'] = tracks
+
                 try:
-                    tracks = (await self.node.get_tracks(query, track_cls=LavalinkTrack, playlist_cls=LavalinkPlaylist))
-                except Exception as e:
-                    if track.info["sourceName"] == "youtube" and any(e in str(e) for e in (
-                        "This video is not available",
-                        "YouTube WebM streams are currently not supported.",
-                        "Video returned by YouTube isn't what was requested",
-                        "The video returned is not what was requested.",
-                    )
-                           ):
-                        cog = self.bot.get_cog("Music")
-                        cog.remove_provider(self.node.search_providers, ["ytsearch", "ytmsearch"])
-                        cog.remove_provider(self.node.partial_providers, ["ytsearch:\"{isrc}\"",
-                                                                          "ytsearch:\"{title} - {author}\"",
-                                                                          "ytmsearch:\"{isrc}\"",
-                                                                          "ytmsearch:\"{title} - {author}\"",
-                                                                          ])
-                        self.native_yt = False
-                        await self.resolve_track(track)
-                        return
-                    exceptions.append(e)
-                    continue
+                    if result[0].info["sourceName"] == "bandcamp":
+                        check_duration = False
+                except:
+                    pass
 
-                if tracks:
-                    break
+                has_exclude_tags = any(tag for tag in exclude_tags if tag.lower() in track.title.lower())
 
-            try:
-                tracks = tracks.tracks
-            except AttributeError:
-                pass
+                tracks.extend(result)
 
-            if not tracks:
-                if exceptions:
-                    print("Failure to resolve PartialTrack:\n" + "\n".join(repr(e) for e in exceptions))
-                return
+                for t in result:
 
-            selected_track = None
+                    if t.is_stream:
+                        continue
 
-            if tracks[0].info["sourceName"] == "bandcamp":
-                check_duration = False
+                    if not has_exclude_tags and any(tag for tag in exclude_tags if tag.lower() in t.title.lower()):
+                        continue
 
-            has_exclude_tags = any(tag for tag in exclude_tags if tag.lower() in track.title.lower())
+                    if check_duration and not ((t.duration - 10000) < track.duration < (t.duration + 10000)):
+                        continue
 
-            for t in tracks:
-
-                if t.is_stream:
-                    continue
-
-                if not has_exclude_tags and any(tag for tag in exclude_tags if tag.lower() in t.title.lower()):
-                    continue
-
-                if check_duration and ((t.duration - 10000) < track.duration < (t.duration + 10000)):
                     selected_track = t
                     break
 
+                if selected_track:
+                    break
+
             if not selected_track:
-                selected_track = tracks[0]
+                try:
+                    selected_track = tracks[0]
+                except:
+                    if exceptions:
+                        print("Failure to resolve PartialTrack:\n" + "\n".join(repr(e) for e in exceptions))
+                    return
 
             track.id = selected_track.id
+            track.info["id"] = selected_track.id
             track.info["length"] = selected_track.duration
-            track.info["sourceNameOrig"] = selected_track.info["sourceName"]
+            if track.info["sourceName"] == "last.fm":
+                track.info["pluginInfo"] = selected_track.info.get("pluginInfo", {})
+                track.info["author"] = selected_track.author
+                track.info["title"] = selected_track.title
+                track.info["sourceName"] = selected_track.info["sourceName"]
+                track.info["uri"] = selected_track.info["uri"]
+            else:
+                track.info["sourceNameOrig"] = selected_track.info["sourceName"]
+                if not track.info["author"]:
+                    track.info["author"] = selected_track.author
+            if not track.duration:
+                track.info["duration"] = selected_track.duration
+            if not track.thumb:
+                track.info["artworkUrl"] = selected_track.thumb
 
         except Exception as e:
             traceback.print_exc()
@@ -2970,9 +3343,6 @@ class LavalinkPlayer(wavelink.Player):
                             f"**Music server:** `{self.node.identifier}`",
                 color=disnake.Colour.red())
             await self.report_error(embed, track)
-            return
-
-        return
 
     async def _wait_for_new_node(self, txt: str = None, ignore_node: wavelink.Node = None):
 
@@ -2992,7 +3362,7 @@ class LavalinkPlayer(wavelink.Player):
 
             self.set_command_log(
                 txt or "There are no music servers available. I will make some attempts to connect to a new music server.",
-                emoji="⏰"
+                emoji="⏰", controller=True
             )
             self.update = True
 
@@ -3025,7 +3395,7 @@ class LavalinkPlayer(wavelink.Player):
                         can_connect(self.last_channel, self.guild, bot=self.bot)
                     except Exception as e:
                         print(traceback.format_exc())
-                        self.set_command_log(f"The player was terminated due to an error: {e}")
+                        self.set_command_log(f"The player was terminated due to an error: {e}", controller=True)
                         await self.destroy()
                         return
                     await self.connect(self.last_channel.id)
@@ -3036,6 +3406,7 @@ class LavalinkPlayer(wavelink.Player):
                     self.queue.appendleft(self.current)
                     start_position = self.position
                     self.current = None
+                    self.current_encoded = None
                 else:
                     start_position = 0
 
@@ -3047,7 +3418,7 @@ class LavalinkPlayer(wavelink.Player):
                             txt = f"The player was moved to the music server **{node.identifier}**."
                         else:
                             txt = f"The player was reconnected to the music server **{self.node.identifier}**"
-                        self.set_command_log(emoji="📶", text=txt)
+                        self.set_command_log(emoji="📶", text=txt, controller=True)
                         self.update = True
                 except:
                     print(traceback.format_exc())
@@ -3096,7 +3467,7 @@ class LavalinkPlayer(wavelink.Player):
                 try:
                     users = voice_channel.voice_states
                 except AttributeError:
-                    # TODO: Investigar possível bug ao mover o bot de canal pelo discord.
+                    # TODO: Investigate possible bug when moving the bot between channels via Discord.
                     return
 
             thumb = self.bot.user.display_avatar.replace(
@@ -3158,6 +3529,7 @@ class LavalinkPlayer(wavelink.Player):
 
                 try:
                     stats["idle_endtime"] = int(self.idle_endtime.timestamp())
+                    stats["idle_starttime"] = self.idle_start_timestamp
                 except:
                     pass
 
@@ -3178,11 +3550,13 @@ class LavalinkPlayer(wavelink.Player):
                     "loop": self.current.track_loops or self.loop,
                     "queue": len(self.queue),
                     "247": self.keep_connected,
-                    "autoplay": self.current.autoplay
+                    "autoplay": self.current.autoplay,
                 }
 
+                stats["start_time"] = self.start_timestamp
+
                 if self.current.is_stream:
-                    stats["track"]["duration"] = self.start_time.timestamp()
+                    stats["track"]["duration"] = int(self.start_time.timestamp())
                 else:
                     stats["track"]["duration"] = track.duration
 
@@ -3241,7 +3615,7 @@ class LavalinkPlayer(wavelink.Player):
         if create_task:
             self._queue_updater_task = self.bot.loop.create_task(cog.queue_updater_task(self))
 
-    async def track_end(self):
+    async def track_end(self, ignore_track_loop=False):
 
         self.votes.clear()
 
@@ -3259,7 +3633,7 @@ class LavalinkPlayer(wavelink.Player):
             elif self.is_previows_music:
                 self.queue.insert(1, self.last_track)
                 self.is_previows_music = False
-            elif self.last_track.track_loops:
+            elif self.last_track.track_loops and not ignore_track_loop:
                 self.last_track.info["extra"]["track_loops"] -= 1
                 self.queue.insert(0, self.last_track)
             elif self.loop == "queue": # or self.keep_connected:
@@ -3285,6 +3659,21 @@ class LavalinkPlayer(wavelink.Player):
             return
 
         self.is_closing = True
+
+        try:
+            self.track_load_task.cancel()
+        except:
+            pass
+
+        try:
+            self.event_queue_task.cancel()
+        except:
+            pass
+
+        try:
+            self.lyric_task.cancel()
+        except:
+            pass
 
         await self.cleanup(inter)
 
@@ -3313,6 +3702,7 @@ class LavalinkPlayer(wavelink.Player):
     async def seek(self, position: int = 0) -> None:
         self.last_position = position
         await super().seek(position=position)
+        self.start_timestamp = (disnake.utils.utcnow() - datetime.timedelta(milliseconds=self.position)).timestamp()
         self.bot.dispatch("player_seek", player=self, position=position)
 
     async def set_distortion(self, sin_offset: float = 0, sin_scale: float = 1.0, cos_offset: float = 0,
@@ -3431,6 +3821,11 @@ class LavalinkPlayer(wavelink.Player):
         await self.update_filters()
 
         return filter_type
+
+
+class CustomYTDL(YoutubeDL):
+    def save_cookies(self):
+        pass
 
 
 def music_mode(bot: BotCore):

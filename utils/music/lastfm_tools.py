@@ -2,7 +2,6 @@ import hashlib
 import os
 import pickle
 import time
-from typing import Optional
 
 from aiohttp import ClientSession
 from cachetools import TTLCache
@@ -23,11 +22,16 @@ class LastFM:
 
     def scrobble_load_cache(self):
 
+        cache = TTLCache(maxsize=10000, ttl=600)
+
         if os.path.exists(cache_file):
             with open(cache_file, 'rb') as f:
-                return pickle.load(f)
+                try:
+                    cache.update(pickle.load(f))
+                except EOFError:
+                    pass
 
-        return TTLCache(maxsize=10000, ttl=600)
+        return cache
 
     def scrobble_save_cache(self):
         with open(cache_file, 'wb') as f:
@@ -182,7 +186,17 @@ class LastFM:
                 params['artist'] = artist
     
         return (await self.request_lastfm(params))['similartracks']['track']
-    
+
+    async def get_artist_toptracks(self, artist: str, limit=20):
+        return (await self.request_lastfm(
+            {
+                'method': 'artist.gettoptracks',
+                'api_key': self.api_key,
+                'artist': artist,
+                'limit': limit,
+            }
+        ))['toptracks']['track']
+
     async def get_similar_artists(self, artist: str, mbid: str = None):
         params = {
             'method': 'artist.getSimilar',

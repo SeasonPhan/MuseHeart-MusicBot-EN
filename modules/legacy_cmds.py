@@ -49,7 +49,7 @@ async def run_command(cmd: str):
         cmd, stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
-        env=os.environ
+        env=dict(os.environ)
     )
     stdout, stderr = await p.communicate()
     r = ShellResult(p.returncode, stdout, stderr)
@@ -70,10 +70,6 @@ class Owner(commands.Cog):
 
     os_quote = "\"" if os.name == "nt" else "'"
     git_format = f"--pretty=format:{os_quote}%H*****%h*****%s*****%ct{os_quote}"
-
-    extra_files = [
-        "./playlist_cache.json",
-    ]
 
     additional_files = [
         "./lavalink.ini",
@@ -171,6 +167,9 @@ class Owner(commands.Cog):
 
             if args.yml and os.path.isfile("./application.yml"):
                 os.remove("./application.yml")
+                txt = "The Lavalink.jar and application.yml files will be updated"
+            else:
+                txt = "The Lavalink.jar file will be updated"
 
             await self.bot.pool.start_lavalink()
 
@@ -195,8 +194,7 @@ class Owner(commands.Cog):
 
         await ctx.send(
             embed=disnake.Embed(
-                description="**The Lavalink.jar file will be updated "
-                            "and the local Lavalink server will be restarted.**",
+                description=f"**{txt} and the LOCAL lavalink server will be restarted.**",
                 color=self.bot.get_color(ctx.guild.me)
             )
         )
@@ -206,7 +204,7 @@ class Owner(commands.Cog):
                    alt_name="Reload bot configurations.")
     async def reloadconfig(self, ctx: Union[CustomContext, disnake.MessageInteraction]):
 
-        self.bot.pool.load_cfg()
+        self.bot.pool.config = self.bot.pool.load_cfg()
 
         txt = "**The bot settings have been reloaded successfully!**"
 
@@ -217,9 +215,8 @@ class Owner(commands.Cog):
             return txt
 
     @commands.is_owner()
-    @panel_command(aliases=["rd"], description="Reload modules.", emoji="🔄",
-                   alt_name="Load/Reload modules.")
-    async def reload(self, ctx: Union[CustomContext, disnake.MessageInteraction], *modules):
+    @panel_command(aliases=["rds", "reloadskins"], description="Reload skins.", emoji="🎨")
+    async def reloadskins(self, ctx: Union[CustomContext, disnake.MessageInteraction]):
 
         for m in list(sys.modules):
             if not m.startswith("utils.music.skins."):
@@ -229,38 +226,74 @@ class Owner(commands.Cog):
             except:
                 continue
 
-        modules = [f"{m.lower()}.py" for m in modules]
-
-        data = {}
-
         self.bot.pool.load_skins()
 
-        for bot in (allbots:=set(self.bot.pool.get_all_bots())):
-            data = bot.load_modules(modules)
-            bot.sync_command_cooldowns(force=True)
-
-        for bot in allbots:
-            await bot.sync_app_commands(force=True)
-
-        txt = ""
-
-        if data["loaded"]:
-            txt += f'**Loaded modules:** ```ansi\n[0;34m{" [0;37m| [0;34m".join(data["loaded"])}```\n'
-
-        if data["reloaded"]:
-            txt += f'**Reloaded modules:** ```ansi\n[0;32m{" [0;37m| [0;32m".join(data["reloaded"])}```\n'
-
-        if data["failed"]:
-            txt += f'**Modules that failed:** ```ansi\n[0;31m{" [0;37m| [0;31m".join(data["failed"])}```\n'
-
-        if not txt:
-            txt = "**No modules found...**"
-
-        self.bot.pool.config = load_config()
+        txt = "**The skins have been reloaded successfully!**"
 
         if isinstance(ctx, CustomContext):
             embed = disnake.Embed(colour=self.bot.get_color(ctx.me), description=txt)
             await ctx.send(embed=embed, view=self.owner_view)
+        else:
+            return txt
+
+    @commands.is_owner()
+    @panel_command(aliases=["rd", "reload"], description="Reload modules.", emoji="🔄",
+                   alt_name="Load/Reload modules.")
+    async def reload(self, ctx: Union[CustomContext, disnake.MessageInteraction], *modules):
+
+        modules = [f"{m.lower()}.py" for m in modules]
+
+        modules_list = set()
+
+        for bot in (allbots:=set(self.bot.pool.get_all_bots())):
+            for m in list(bot.extensions):
+                for m_name in modules:
+                    if m_name[:-3].lower() == m.split(".")[-1]:
+                        modules_list.add(m)
+
+        # unload_sys_list = set()
+
+        #for m in modules_list:
+        #    for cog_name, cog in self.bot.cogs.items():
+        #        if cog.__module__ == m and (cog_modules:=getattr(cog, "modules", None)):
+        #            unload_sys_list.update(cog_modules)
+
+        for bot in allbots:
+            for m in modules_list:
+                bot.unload_extension(m)
+
+        #for m in unload_sys_list:
+        #    try:
+        #        del sys.modules[m]
+        #    except KeyError:
+        #        pass
+
+        data = {}
+
+        if isinstance(ctx, CustomContext):
+            await ctx.trigger_typing()
+
+        for bot in allbots:
+            data = bot.load_modules(modules)
+            bot.sync_command_cooldowns(force=True)
+            if not data["failed"]:
+                await bot.sync_app_commands(force=True)
+
+        txt = ""
+
+        if loaded := data["loaded"] + data["reloaded"]:
+            txt += f'**Loaded/Reloaded modules:** ```ansi\n [0;34m{"  [0;37m|  [0;34m".join(loaded)}```\n'
+
+        if data["failed"]:
+            txt += f'**Modules that failed:** ```ansi\n [0;31m{"  [0;37m|  [0;31m".join(data["failed"])}```\n'
+
+        if not txt:
+            raise GenericError("**No module found...**")
+
+        self.bot.pool.config = load_config()
+
+        if isinstance(ctx, CustomContext):
+            await ctx.send(embed=disnake.Embed(colour=self.bot.get_color(ctx.me), description=txt))
         else:
             return txt
 
@@ -302,7 +335,7 @@ class Owner(commands.Cog):
         except:
             pass
 
-        if args.force or not os.path.exists(os.environ["GIT_DIR"]):
+        if git_clean:=args.force or not os.path.exists(os.environ["GIT_DIR"]):
             out_git += await self.cleanup_git(force=args.force)
 
         try:
@@ -310,25 +343,32 @@ class Owner(commands.Cog):
         except:
             pass
 
-        try:
-            pull_log = await run_command("git --work-tree=. pull --allow-unrelated-histories -X theirs")
-            if "Already up to date" in pull_log:
-                raise GenericError("**I already have the latest updates installed....**")
-            out_git += pull_log
+        if not git_clean:
 
-        except GenericError as e:
-            raise e
+            try:
+                pull_log = await run_command("git --work-tree=. pull --allow-unrelated-histories -X theirs")
+                if "Already up to date" in pull_log:
+                    raise GenericError("**I already have the latest updates installed...**")
+                out_git += pull_log
 
-        except Exception as e:
+            except GenericError as e:
+                raise e
 
-            if "Already up to date" in str(e):
-                raise GenericError("I already have the latest updates installed....")
+            except Exception as e:
 
-            elif not "Fast-forward" in str(e):
-                out_git += await self.cleanup_git(force=True)
+                if "Already up to date" in str(e):
+                    raise GenericError("I already have the latest updates installed...")
 
-            elif "Need to specify how to reconcile divergent branches" in str(e):
-                out_git += await run_command("git --work-tree=. rebase --no-ff")
+                elif not "Fast-forward" in str(e):
+                    traceback.print_exc()
+                    try:
+                        await run_command("git --work-tree=. reset --hard origin/main")
+                    except:
+                        traceback.print_exc()
+                        out_git += await self.cleanup_git(force=True)
+
+                elif "Need to specify how to reconcile divergent branches" in str(e):
+                    out_git += await run_command("git --work-tree=. rebase --no-ff")
 
         commit = ""
 
@@ -350,7 +390,12 @@ class Owner(commands.Cog):
         if git_log:
             txt += f"\n\n{self.format_log(git_log[:10])}"
 
-        txt += f"\n\n`📄` **Log:** ```py\n{out_git[:1000].split('Fast-forward')[-1]}```\n{text}"
+        if git_log_txt := out_git[:1000].split('Fast-forward')[-1]:
+            if git_clean:
+                git_log_txt = "\n".join(l for l in git_log_txt.split("\n") if not l.startswith("hint: "))
+            txt += f"\n\n`📄` **Log:** ```py\n{git_log_txt}```\n{text}"
+        else:
+            txt += f"\n\n{text}"
 
         if isinstance(ctx, CustomContext):
             embed = disnake.Embed(
@@ -742,10 +787,6 @@ class Owner(commands.Cog):
             for dir_path, dir_names, filenames in os.walk(extra_dir):
                 filelist += "\n" + "\n".join(os.path.join(dir_path, file) for file in filenames)
 
-        for file in self.extra_files:
-            if os.path.isfile(file):
-                filelist += "\n" + file
-
         for file in self.additional_files:
             if os.path.isfile(file):
                 filelist += "\n" + file
@@ -1053,7 +1094,7 @@ class Owner(commands.Cog):
 
         async with ctx.bot.session.get(url) as r:
             if r.status != 200:
-                raise GenericError(f"Erro {r.status}: {await r.text()}")
+                raise GenericError(f"Error {r.status}: {await r.text()}")
             image_bytes = await r.read()
 
         payload = {mode: await disnake.utils._assetbytes_to_base64_data(image_bytes)}

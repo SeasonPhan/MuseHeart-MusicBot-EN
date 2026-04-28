@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import datetime
+import itertools
 from os.path import basename
 
 import disnake
@@ -95,7 +96,7 @@ class DefaultProgressbarStaticSkin:
                 m = 'Current Song'
             else:
                 e = '🔁'
-                m = 'Fila'
+                m = 'Queue'
             txt += f"\n> -# {e} **⠂Repeat mode:** `{m}`"
 
         if player.current.album_name:
@@ -216,17 +217,12 @@ class DefaultProgressbarStaticSkin:
             disnake.ui.Select(
                 placeholder="More options:",
                 custom_id="musicplayer_dropdown_inter",
-                min_values=0, max_values=1,
+                min_values=0, max_values=1, required = False,
                 options=[
                     disnake.SelectOption(
                         label="Add music", emoji="<:add_music:588172015760965654>",
                         value=PlayerControls.add_song,
                         description="Add a song/playlist to the queue."
-                    ),
-                    disnake.SelectOption(
-                        label="Add favorite to queue", emoji="⭐",
-                        value=PlayerControls.enqueue_fav,
-                        description="Add one of your favorites to the queue."
                     ),
                     disnake.SelectOption(
                         label="Add to your favorites", emoji="💗",
@@ -269,13 +265,34 @@ class DefaultProgressbarStaticSkin:
                         description="System for automatic addition of music when the queue is empty."
                     ),
                     disnake.SelectOption(
-                        label=("Disable" if player.restrict_mode else "Enable") + " restrict mode", emoji="🔐",
+                        label="Last.fm scrobble", emoji="<:Lastfm:1278883704097341541>",
+                        value=PlayerControls.lastfm_scrobble,
+                        description="Enable/disable scrobbling/logging of songs on your last.fm account."
+                    ),
+                    disnake.SelectOption(
+                        label=("Disable" if player.restrict_mode else "Enable") + " restricted mode", emoji="🔐",
                         value=PlayerControls.restrict_mode,
                         description="Only DJ/Staff can use restricted commands."
                     ),
                 ]
             ),
         ]
+
+        if (queue:=player.queue or player.queue_autoplay):
+            data["components"].append(
+                disnake.ui.Select(
+                    placeholder="Upcoming songs:",
+                    custom_id="musicplayer_queue_dropdown",
+                    min_values=0, max_values=1, required = False,
+                    options=[
+                        disnake.SelectOption(
+                            label=fix_characters(f"{n+1}. {t.single_title}", 47),
+                            description=fix_characters(f"[{time_format(t.duration) if not t.is_stream else '🔴 Live'}]. {t.authors_string}", 47),
+                            value=f"{n:02d}.{t.title[:96]}"
+                        ) for n, t in enumerate(itertools.islice(queue, 25))
+                    ]
+                )
+            )
 
         if player.current.ytid and player.node.lyric_support:
             data["components"][5].options.append(
@@ -293,15 +310,6 @@ class DefaultProgressbarStaticSkin:
                     label="Automatic status", emoji="📢",
                     value=PlayerControls.set_voice_status,
                     description="Set up automatic voice channel status."
-                )
-            )
-
-        if not player.static and not player.has_thread:
-            data["components"][5].options.append(
-                disnake.SelectOption(
-                    label="Song-Request Thread", emoji="💬",
-                    value=PlayerControls.song_request_thread,
-                    description="Create a temporary thread/conversation to request songs using just the name/link."
                 )
             )
 

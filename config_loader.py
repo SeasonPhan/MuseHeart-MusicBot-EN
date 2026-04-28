@@ -18,6 +18,7 @@ DEFAULT_CONFIG = {
     "COMMAND_LOG": False,
     "EMBED_COLOR": None,
     "BOT_ADD_REMOVE_LOG": '',
+    "BOT_ADD_REMOVE_LOG_CHANNEL_ID": 0,
     "ERROR_REPORT_WEBHOOK": '',
     "AUTO_ERROR_REPORT_WEBHOOK": '',
     "INTERACTION_COMMAND_ONLY": False,
@@ -67,12 +68,17 @@ DEFAULT_CONFIG = {
     "QUEUE_MAX_ENTRIES": 0,
     "ENABLE_DEFER_TYPING": True,
     "VOICE_CHANNEL_LATENCY_RECONNECT": 200,
+    "PLAYLIST_CACHE_SIZE": 500,
+    "PLAYLIST_CACHE_TTL": 1800,
+    "USE_YTM_TRACKINFO_SCROBBLE": False,
+    "ENABLE_SONGREQUEST_MENTION": True,
 
     ######################################
     ### Music System - Spotify Support ###
     ######################################
     "SPOTIFY_CLIENT_ID": '',
     "SPOTIFY_CLIENT_SECRET": '',
+    "SPOTIFY_PLAYLIST_EXTRA_PAGE_LIMIT": 0,
 
     ###########################################
     ### Music System - RPC (Rich Presence): ###
@@ -96,6 +102,8 @@ DEFAULT_CONFIG = {
     "LAVALINK_CPU_CORES": 2,
     "LAVALINK_FILE_URL": "https://github.com/zRitsu/LL-binaries/releases/download/0.0.1/Lavalink.jar",
     "SEARCH_PROVIDERS": "scsearch",
+    "PREFER_YOUTUBE_NATIVE_PLAYBACK": True,
+    "ONLY_USE_NATIVE_SEARCH_PROVIDERS": True,
 
     ###############################################
     ### Music system - Integration with Last.fm ###
@@ -141,8 +149,8 @@ DEFAULT_CONFIG = {
     ##############
     ### Tests ####
     ##############
-    "USE_YTDL": True,
     "FORCE_USE_DEEZER_CLIENT": False,
+    "YOUTUBE_TRACK_COOLDOWN": 20,
     "SILENT_PUBLICBOT_WARNING": False,
     "DBCACHE_SIZE": 1000,
     "DBCACHE_TTL": 300
@@ -203,15 +211,23 @@ def load_config():
         "VOICE_CHANNEL_LATENCY_RECONNECT",
         "DBCACHE_SIZE",
         "DBCACHE_TTL",
+        "PLAYLIST_CACHE_SIZE",
+        "PLAYLIST_CACHE_TTL",
+        "SPOTIFY_PLAYLIST_EXTRA_PAGE_LIMIT",
+        "BOT_ADD_REMOVE_LOG_CHANNEL_ID",
+        "YOUTUBE_TRACK_COOLDOWN",
     ]:
+
+        if not CONFIG[i]:
+            CONFIG[i] = DEFAULT_CONFIG[i]
+            continue
+
         try:
-            new_value = int(CONFIG[i])
+            CONFIG[i] = int(CONFIG[i])
         except ValueError as e:
             raise Exception(f"You used an invalid configuration! {i}: {CONFIG[i]}\n{repr(e)}")
 
-        CONFIG[i] = new_value
-
-    # Convert strings requiring a boolean/null value.
+    # converter strings que requer valor bool/nulo.
     for i in [
         "AUTO_SYNC_COMMANDS",
         "INTERACTION_COMMAND_ONLY",
@@ -250,24 +266,24 @@ def load_config():
         "PRESENCES_INTENT",
         "MESSAGE_CONTENT_INTENT",
 
-        "USE_YTDL",
+        "PREFER_YOUTUBE_NATIVE_PLAYBACK",
+        "ONLY_USE_NATIVE_SEARCH_PROVIDERS",
+        "USE_YTM_TRACKINFO_SCROBBLE",
         "FORCE_USE_DEEZER_CLIENT",
         "SILENT_PUBLICBOT_WARNING",
+        "ENABLE_SONGREQUEST_MENTION",
     ]:
-        if CONFIG[i] in (True, False, None):
+
+        if CONFIG[i] in (True, False, None, ""):
+            CONFIG[i] = DEFAULT_CONFIG[i]
             continue
 
         try:
-            new_value = bools[CONFIG[i]]
+            CONFIG[i] = bools[CONFIG[i]]
         except KeyError as e:
             raise Exception(f"You used an invalid configuration! {i}: {CONFIG[i]}\n{repr(e)}")
 
-        CONFIG[i] = new_value
-
     CONFIG["RPC_SERVER"] = CONFIG["RPC_SERVER"].replace("$PORT", CONFIG.get("PORT") or environ.get("PORT", "80"))
-
-    if CONFIG["IDLE_TIMEOUT"] < 60:
-        CONFIG["IDLE_TIMEOUT"] = 60
 
     if CONFIG["WAIT_FOR_MEMBERS_TIMEOUT"] < 60:
         CONFIG["WAIT_FOR_MEMBERS_TIMEOUT"] = 60
@@ -277,6 +293,9 @@ def load_config():
 
     if CONFIG["IDLE_TIMEOUT"] < 10:
         CONFIG["IDLE_TIMEOUT"] = 10
+
+    if CONFIG["YOUTUBE_TRACK_COOLDOWN"] < 7:
+        CONFIG["YOUTUBE_TRACK_COOLDOWN"] = 7
 
     if CONFIG["PLAYER_INFO_BACKUP_INTERVAL"] < 30:
         CONFIG["PLAYER_INFO_BACKUP_INTERVAL"] = 30

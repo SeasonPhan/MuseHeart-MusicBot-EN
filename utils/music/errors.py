@@ -28,6 +28,12 @@ class GenericError(commands.CheckFailure):
         self.components = components
         self.error = error
 
+    def __repr__(self):
+        return disnake.utils.escape_markdown(self.text)
+
+    def __str__(self):
+        return disnake.utils.escape_markdown(self.text)
+
 
 class EmptyFavIntegration(commands.CheckFailure):
     pass
@@ -72,7 +78,7 @@ class YoutubeSourceDisabled(commands.CheckFailure):
 
 def parse_error(
         ctx: Union[disnake.ApplicationCommandInteraction, commands.Context, disnake.MessageInteraction],
-        error: Exception
+        error: Exception, **kwargs
 ):
 
     error_txt = None
@@ -172,10 +178,8 @@ def parse_error(
         mention_author = True
 
         components = [
-            disnake.ui.Button(label="Open the favorites manager",
+            disnake.ui.Button(label="Open the favorites and integrations manager",
                               custom_id="musicplayer_fav_manager", emoji="⭐"),
-            disnake.ui.Button(label="Open the integrations manager",
-                              custom_id="musicplayer_integration_manager", emoji="💠")
         ]
 
     elif isinstance(error, commands.MaxConcurrencyReached):
@@ -224,7 +228,8 @@ def parse_error(
 
     if not error_txt:
         full_error_txt = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-        print(full_error_txt)
+        if not kwargs.get("no_log"):
+            print(full_error_txt)
     elif send_error:
         full_error_txt = "".join(traceback.format_exception(type(error), error, error.__traceback__))
 

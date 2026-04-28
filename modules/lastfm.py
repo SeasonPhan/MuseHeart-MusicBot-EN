@@ -3,14 +3,15 @@ from __future__ import annotations
 import asyncio
 import datetime
 import traceback
-from typing import TYPE_CHECKING, Optional
-from urllib.parse import quote
+from typing import TYPE_CHECKING, Optional, List
 
 import disnake
 from aiohttp import ClientSession
 from disnake.ext import commands
+from rapidfuzz import fuzz
 
-from utils.db import DBModel
+import wavelink
+from utils.db import DBModel, scrobble_model
 from utils.music.errors import GenericError
 from utils.music.lastfm_tools import LastFmException
 from utils.music.models import LavalinkPlayer, LavalinkTrack, exclude_tags
@@ -27,11 +28,12 @@ def check_track_title(t: str):
 
 class LastFMView(disnake.ui.View):
 
-    def __init__(self, ctx, session_key: str):
+    def __init__(self, ctx, session_key: str, scrobble: bool = True):
         super().__init__(timeout=300)
         self.ctx = ctx
         self.interaction: Optional[disnake.MessageInteraction] = None
         self.session_key = ""
+        self.scrobble_enabled = scrobble
         self.username = ""
         self.token = ""
         self.last_timestamp = None
@@ -41,49 +43,72 @@ class LastFMView(disnake.ui.View):
         self.clear_session = False
         self.check_loop = None
         self.error = None
-        self.cooldown = commands.CooldownMapping.from_cooldown(1, 15, commands.BucketType.user)
+        self.account_linked = False
+        self.session_key = session_key
+        self.cooldown_scrobble_btn = commands.CooldownMapping.from_cooldown(1, 7, commands.BucketType.user)
+        self.build_components()
 
+    def build_components(self):
 
-        if session_key:
+        if self.session_key:
+
+            btn1 = disnake.ui.Button(label=f"{'Desativar' if self.scrobble_enabled else 'Ativar'} scrobble/registro")
+            btn1.callback = self.scrobble_enable
+            self.add_item(btn1)
+
             btn2 = disnake.ui.Button(label="Unlink last.fm account", style=disnake.ButtonStyle.red)
             btn2.callback = self.disconnect_account
             self.add_item(btn2)
 
         else:
-            btn = disnake.ui.Button(label="Link last.fm account")
-            btn.callback = self.send_authurl_callback
-            self.add_item(btn)
+            btn3 = disnake.ui.Button(label="Link last.fm account")
+            btn3.callback = self.send_authurl_callback
+            self.add_item(btn3)
 
     async def check_session_loop(self):
 
         count = 15
 
         while count > 0:
+            await asyncio.sleep(20)
             try:
-                await asyncio.sleep(20)
                 data = await self.ctx.bot.last_fm.get_session_key(token=self.token)
-                if data.get('error'):
-                    count -= 1
-                    continue
-                self.session_key = data["session"]["key"]
-                self.username = data["session"]["name"]
-                self.stop()
-                return
             except Exception as e:
                 self.error = e
-                self.auth_url = ""
-                self.token = ""
-                self.stop()
-                return
+                count -= 1
+                continue
+            self.session_key = data["session"]["key"]
+            self.username = data["session"]["name"]
+            self.account_linked = True
+            self.scrobble_enabled = True
+            self.stop()
+            return
 
         self.auth_url = ""
         self.token = ""
+        self.stop()
 
     async def interaction_check(self, interaction: disnake.MessageInteraction) -> bool:
         if interaction.user.id != self.ctx.author.id:
             await interaction.send("You cannot use that button", ephemeral=True)
             return False
         return True
+
+    async def scrobble_enable(self, interaction: disnake.MessageInteraction):
+
+        if (retry_after := self.cooldown_scrobble_btn.get_bucket(interaction).update_rate_limit()):
+            await interaction.send(f"**You will have to wait {(rta := int(retry_after))} second{'s'[:rta ^ 1]} to enable/disable the scrobble/log.**", ephemeral=True)
+            return
+
+        self.scrobble_enabled = not self.scrobble_enabled
+        self.interaction = interaction
+        await interaction.response.defer()
+        user_data = await self.ctx.bot.get_global_data(interaction.author.id, db_name=DBModel.users)
+        user_data["lastfm"]["scrobble"] = self.scrobble_enabled
+        await self.ctx.bot.update_global_data(interaction.author.id, user_data, db_name=DBModel.users)
+        self.clear_items()
+        self.build_components()
+        await interaction.edit_original_message(view=self)
 
     async def disconnect_account(self, interaction: disnake.MessageInteraction):
         self.clear_session = True
@@ -127,12 +152,12 @@ class LastFmCog(commands.Cog):
 
         await self.lastfm.callback(self=self, inter=ctx)
 
-
     @commands.slash_command(hidden=True, name="lastfm",
                       description=f"{desc_prefix}Link your last.fm account to track your music through scrobble.",
                       extras={"allow_private": True},
                       cooldown=lastfm_cd, max_concurrency=lastfm_mc)
-    async def lastfm(self, inter: disnake.AppCmdInter):
+    @commands.contexts(guild=True)
+    async def lastfm(self, inter: disnake.ApplicationCommandInteraction):
 
         try:
             if not inter.permissions.embed_links:
@@ -198,94 +223,98 @@ class LastFmCog(commands.Cog):
 
             embeds = [disnake.Embed(
                 description=txt, color=self.bot.get_color()
-            ).set_thumbnail(url=lastfm_user['image'][-1]["#text"]).set_author(
+            ).set_thumbnail(url=lastfm_user['image'][-1]["#text"][:-4] + ".gif").set_author(
                 name="Last.fm: Linked account information",
                 icon_url="https://www.last.fm/static/images/lastfm_avatar_twitter.52a5d69a85ac.png")]
 
-            top_tracks = await self.bot.last_fm.user_top_tracks(data["lastfm"]["username"], limit=3)
+            try:
+                top_tracks = await self.bot.last_fm.user_top_tracks(data["lastfm"]["username"], limit=3)
 
-            if top_tracks:
+                if top_tracks:
 
-                embed = disnake.Embed(
-                    description="\n".join(f"> ` {n+1}º ` [`{t['name']}`]({t['url']}) `De:` [`{t['artist']['name']}`]({t['artist']['url']}) `(x{int(t['playcount']):,})`" for n, t in enumerate(top_tracks)),
-                    color=embed_color).set_author(name=f"Top 3: Songs you listened to the most (out of the total {int(lastfm_user['track_count']):,}):",
-                    icon_url="https://i.ibb.co/Hhcwdf9/muse-heart-disc.jpg",
-                    url=f"https://www.last.fm/user/{lastfm_user['name']}/library")
+                    embed = disnake.Embed(
+                        description="\n".join(f"> ` {n+1}º ` [`{t['name']}`]({t['url']}) `By:` [`{t['artist']['name']}`]({t['artist']['url']}) `(x{int(t['playcount']):,})`" for n, t in enumerate(top_tracks)),
+                        color=embed_color).set_author(name=f"Top 3: Songs you listened to the most (out of the total {int(lastfm_user['track_count']):,}):",
+                        icon_url="https://i.ibb.co/Hhcwdf9/muse-heart-disc.jpg",
+                        url=f"https://www.last.fm/user/{lastfm_user['name']}/library")
 
-                if thumb:=top_tracks[0]['image'][-1]["#text"]:
+                    if thumb:=top_tracks[0]['image'][-1]["#text"]:
 
-                    if thumb.endswith("2a96cbd8b46e442fc41c2b86b821562f.png"):
-                        t = top_tracks[0]
-                        kw = {"track": t['name'], 'artist': t['artist']['name']}
+                        if thumb.endswith("2a96cbd8b46e442fc41c2b86b821562f.png"):
+                            t = top_tracks[0]
+                            kw = {"track": t['name'], 'artist': t['artist']['name']}
 
-                        try:
-                            album = t['album']['#text']
-                        except KeyError:
-                            album = None
+                            try:
+                                album = t['album']['#text']
+                            except KeyError:
+                                album = None
 
-                        if album:
-                            kw["album"] = album
-                        r = await self.deezer_search(**kw)
+                            if album:
+                                kw["album"] = album
+                            r = await self.deezer_search(**kw)
 
-                        for i in r:
-                            if album and i['album']['title'] != album:
-                                continue
-                            thumb = i['album']['cover_big']
-                            break
-
-                    embed.set_thumbnail(url=thumb)
-
-                embeds.append(embed)
-
-            top_artists = await self.bot.last_fm.user_top_artists(data["lastfm"]["username"], limit=3)
-
-            if top_artists:
-
-                embed = disnake.Embed(
-                    description="\n".join(f"> ` {n+1}º ` [`{t['name']}`]({t['url']}) `(x{int(t['playcount']):,})`" for n, t in enumerate(top_artists)),
-                    color=embed_color).set_author(name=f"Top 3: Artists you listened to the most (out of the total {int(lastfm_user['artist_count']):,}):",
-                    icon_url="https://i.ibb.co/8KQzkyy/muse-heart-artist-icon.jpg",
-                    url=f"https://www.last.fm/user/{lastfm_user['name']}/library/artists")
-
-                if thumb:=top_artists[0]['image'][-1]["#text"]:
-
-                    if thumb.endswith("2a96cbd8b46e442fc41c2b86b821562f.png"):
-                        t = top_artists[0]
-                        r = await self.deezer_search(**{'artist': t['name']})
-
-                        for i in r:
-                            if i['artist']['name'].lower() == t['name'].lower():
-                                thumb = i['artist']['picture_big']
-                                break
-
-                    embed.set_thumbnail(url=thumb)
-
-                embeds.append(embed)
-
-            top_albuns = await self.bot.last_fm.user_top_albums(data["lastfm"]["username"], limit=3)
-
-            if top_albuns:
-
-                embed = disnake.Embed(
-                    description="\n".join(f"> ` {n+1}º ` [`{b['name']}`]({b['url']}) `de:` [`{b['artist']['name']}`]({b['artist']['url']}) `(x{int(b['playcount']):,})`" for n, b in enumerate(top_albuns)),
-                    color=embed_color).set_author(name=f"Top 5: Albums you listened to the most (out of the total {int(lastfm_user['album_count']):,}):",
-                    icon_url="https://i.ibb.co/s6TQK5D/muse-heart-disc-album.jpg",
-                    url=f"https://www.last.fm/user/{lastfm_user['name']}/library/albums")
-
-                if thumb:=top_albuns[0]['image'][-1]["#text"]:
-
-                    if thumb.endswith("2a96cbd8b46e442fc41c2b86b821562f.png"):
-                        t = top_albuns[0]
-                        r = await self.deezer_search(**{"album": t['album']['#text'], 'artist': t['artist']['name']})
-
-                        for i in r:
-                            if t['album']['#text'].lower() == i['album']['title'].lower():
+                            for i in r:
+                                if album and i['album']['title'] != album:
+                                    continue
                                 thumb = i['album']['cover_big']
                                 break
 
-                    embed.set_thumbnail(url=thumb)
+                        embed.set_thumbnail(url=thumb)
 
-                embeds.append(embed)
+                    embeds.append(embed)
+
+                top_artists = await self.bot.last_fm.user_top_artists(data["lastfm"]["username"], limit=3)
+
+                if top_artists:
+
+                    embed = disnake.Embed(
+                        description="\n".join(f"> ` {n+1}º ` [`{t['name']}`]({t['url']}) `(x{int(t['playcount']):,})`" for n, t in enumerate(top_artists)),
+                        color=embed_color).set_author(name=f"Top 3: Artists you listened to the most (out of the total {int(lastfm_user['artist_count']):,}):",
+                        icon_url="https://i.ibb.co/8KQzkyy/muse-heart-artist-icon.jpg",
+                        url=f"https://www.last.fm/user/{lastfm_user['name']}/library/artists")
+
+                    if thumb:=top_artists[0]['image'][-1]["#text"]:
+
+                        if thumb.endswith("2a96cbd8b46e442fc41c2b86b821562f.png"):
+                            t = top_artists[0]
+                            r = await self.deezer_search(**{'artist': t['name']})
+
+                            for i in r:
+                                if i['artist']['name'].lower() == t['name'].lower():
+                                    thumb = i['artist']['picture_big']
+                                    break
+
+                        embed.set_thumbnail(url=thumb)
+
+                    embeds.append(embed)
+
+                top_albuns = await self.bot.last_fm.user_top_albums(data["lastfm"]["username"], limit=3)
+
+                if top_albuns:
+
+                    embed = disnake.Embed(
+                        description="\n".join(f"> ` {n+1}º ` [`{b['name']}`]({b['url']}) `by:` [`{b['artist']['name']}`]({b['artist']['url']}) `(x{int(b['playcount']):,})`" for n, b in enumerate(top_albuns)),
+                        color=embed_color).set_author(name=f"Top 3: Albums you listened to the most (out of the total {int(lastfm_user['album_count']):,}):",
+                        icon_url="https://i.ibb.co/s6TQK5D/muse-heart-disc-album.jpg",
+                        url=f"https://www.last.fm/user/{lastfm_user['name']}/library/albums")
+
+                    if thumb:=top_albuns[0]['image'][-1]["#text"]:
+
+                        if thumb.endswith("2a96cbd8b46e442fc41c2b86b821562f.png"):
+                            t = top_albuns[0]
+                            r = await self.deezer_search(**{"album": t['album']['#text'], 'artist': t['artist']['name']})
+
+                            for i in r:
+                                if t['album']['#text'].lower() == i['album']['title'].lower():
+                                    thumb = i['album']['cover_big']
+                                    break
+
+                        embed.set_thumbnail(url=thumb)
+
+                    embeds.append(embed)
+            except:
+                traceback.print_exc()
+
 
         else:
             embeds = [disnake.Embed(
@@ -294,11 +323,9 @@ class LastFmCog(commands.Cog):
                             "This will allow you to get music/artist/album recommendations, have a general statistic of the music you listened to, "
                             "and gain access to an amazing community on the platform.**",
                 color=embed_color
-            ).set_thumbnail(url="https://www.last.fm/static/images/lastfm_avatar_twitter.52a5d69a85ac.png").
-                      set_footer(text="Note: Music recognition will be ignored while you are listening to "
-                                      "YouTube and SoundCloud")]
+            ).set_thumbnail(url="https://www.last.fm/static/images/lastfm_avatar_twitter.52a5d69a85ac.png")]
 
-        view = LastFMView(inter, session_key=current_session_key)
+        view = LastFMView(inter, session_key=current_session_key, scrobble=data["lastfm"]["scrobble"])
 
         if isinstance(inter, CustomContext):
             msg = await inter.send(embeds=embeds, view=view)
@@ -329,7 +356,7 @@ class LastFmCog(commands.Cog):
 
             return
 
-        newdata = {"scrobble": True, "sessionkey": view.session_key, "username": view.username}
+        newdata = {"scrobble": view.scrobble_enabled, "sessionkey": view.session_key, "username": view.username or data["lastfm"]["username"]}
         data["lastfm"].update(newdata)
         await self.bot.update_global_data(inter.author.id, data=data, db_name=DBModel.users)
 
@@ -345,8 +372,19 @@ class LastFmCog(commands.Cog):
             func = inter.edit_original_message
 
         if view.session_key:
-            embeds[0].description += f"\n### The account [{view.username}](<https://www.last.fm/user/{view.username}>) " \
-                                 "has been successfully linked!\n\n`Now, when you listen to your music in the voice channel, " \
+
+            for c in view.children:
+                c.disabled = True
+
+            if not view.account_linked:
+                if msg and isinstance(inter, CustomContext):
+                    await msg.edit(view=view)
+                elif (inter:=view.interaction or inter):
+                    await inter.edit_original_message(view=view)
+                return
+
+            embeds[0].description += f"\n### The account [{view.username}](<https://www.last.fm/user/{view.username}>) has been " \
+                                 "successfully linked!\n\n`Now, when you listen to your music in the voice channel, " \
                                 "it will be automatically logged to your last.fm account`"
 
             await func(embeds=embeds, view=view, content=None)
@@ -381,6 +419,9 @@ class LastFmCog(commands.Cog):
         if player.last_channel != after.channel:
             return
 
+        if not player.guild.me.voice:
+            return
+
         try:
             if not player.current or member not in player.last_channel.members:
                 return
@@ -400,6 +441,21 @@ class LastFmCog(commands.Cog):
     @commands.Cog.listener('on_wavelink_track_start')
     async def update_np(self, player: LavalinkPlayer):
         await self.startscrooble(player, track=player.current or player.last_track, update_np=True)
+
+    async def save_scrobble(self, query: str, track: LavalinkTrack, users: List[disnake.Member]):
+
+        for u in users:
+
+            data = await self.bot.pool.local_database.get_data(u.id, collection="scrobbles", db_name=DBModel.users,
+                                                               default_model=scrobble_model)
+            data["tracks"].append(
+                {
+                    "query": query,
+                    "duration": track.duration,
+                }
+            )
+            await self.bot.pool.local_database.update_data(u.id, data, collection="scrobbles", db_name=DBModel.users,
+                                                           default_model=scrobble_model)
 
     @commands.Cog.listener('on_wavelink_track_end')
     async def startscrooble(self, player: LavalinkPlayer, track: LavalinkTrack, reason: str = None, update_np=False, users=None):
@@ -458,51 +514,79 @@ class LastFmCog(commands.Cog):
 
         if not (album := track.album_name) and track.info["sourceName"] in ("youtube", "soundcloud"):
 
-            if track.ytid:
+            if track.ytid and track.author.endswith(" - topic") and not track.author.endswith("Release - topic") and not track.title.startswith(track.author[:-8]):
+                name = track.title
+                artist = track.author[:-8]
+                album = name
 
-                if track.author.endswith(" - topic") and not track.author.endswith("Release - topic") and not track.title.startswith(track.author[:-8]):
-                    name = track.title
-                    artist = track.author[:-8]
+            else:
+                track_query = track.title.lower() if len(track.title) > 12 else f"{track.author} - {track.title}".lower()
 
-                else:
+                if (fmdata := self.bot.last_fm.cache.get(track_query)) is None:
 
-                    track_query = f"{track.title} - {track.author}"
+                    result = None
 
-                    if (fmdata := self.bot.last_fm.cache.get(track_query)) is None:
-
-                        result = await player.bot.spotify.get_tracks(query=f"{track.author} - {track.title}",
-                                                                     requester=self.bot.user.id, bot=self.bot)
-
+                    def filter_result(result):
                         if not [t for t in exclude_tags if t.lower() in track.title]:
-                            result = [t for t in result if (t.duration - 10000) < track.duration < (t.duration + 10000) and check_track_title(t.title)]
+                            result_ = [t for t in result if fuzz.token_sort_ratio(f"{t.authors_string.lower()} - {t.single_title.lower()}", track.title.lower()) > 70 and check_track_title(t.title)]
+                        else:
+                            result_ = [t for t in result if fuzz.token_sort_ratio(f"{t.authors_string.lower()} - {t.single_title.lower()}", track.title.lower()) > 70]
 
-                        if not result:
-                            print(f"⚠️ - Last.FM Scrobble - No results for the song: {track_query}")
-                            self.bot.last_fm.cache[track_query] = {}
-                            self.bot.last_fm.scrobble_save_cache()
-                            return
+                        return result_
 
-                        fmdata = {
-                            "name": result[0].single_title,
-                            "artist": result[0].author,
-                            "album": result[0].album_name,
-                        }
+                    try:
+                        result = filter_result(await player.bot.spotify.get_tracks(
+                            query=f"{track.author} - {track.title}" if len(track.title) < 11 else track.title,
+                            requester=self.bot.user.id, bot=self.bot, check_title=False
+                        ))
+                    except:
+                        traceback.print_exc()
 
-                        self.bot.last_fm.cache[track_query] = fmdata
+                    if not result:
+                        try:
+                            result = filter_result(await player.bot.deezer.get_tracks(
+                                url=f"{track.author} - {track.title}" if len(track.title) < 11 else track.title,
+                                requester=self.bot.user.id, check_title=False
+                            ))
+                        except:
+                            traceback.print_exc()
+
+                    if not result:
+                        if self.bot.config["USE_YTM_TRACKINFO_SCROBBLE"]:
+                            try:
+                                result = filter_result(await player.node.get_tracks(f"ytmsearch:{track_query}", track_cls=LavalinkTrack))
+                            except Exception as e:
+                                if not isinstance(e, wavelink.TrackNotFound):
+                                    traceback.print_exc()
+
+                    if not result:
+                        print(f"⚠️ - Last.FM Scrobble - No results for the song: {track_query}")
+                        self.bot.last_fm.cache[track_query] = {}
                         self.bot.last_fm.scrobble_save_cache()
-
-                    if not fmdata:
-                        print(f"⚠️ - Last.FM Scrobble - Ignored: {track_query}")
+                        await self.save_scrobble(query=track_query, track=track, users=users)
                         return
 
-                    name = fmdata["name"]
-                    artist = fmdata["artist"]
-                    album = fmdata["album"]
-            else:
-                name = track.single_title
-                artist = track.author
+                    result = result[0]
 
-            artist = artist.split(",")[0]
+                    fmdata = {
+                        "name": result.single_title,
+                        "artist": result.author,
+                        "album": result.album_name,
+                    }
+
+                    self.bot.last_fm.cache[track_query] = fmdata
+                    self.bot.last_fm.scrobble_save_cache()
+
+                if not fmdata:
+                    print(f"⚠️ - Last.FM Scrobble - Ignored: {track_query}")
+                    await self.save_scrobble(query=track_query, track=track, users=users)
+                    return
+
+                name = fmdata["name"]
+                artist = fmdata["artist"]
+                album = fmdata["album"] or name
+
+                artist = artist.split(",")[0]
 
         else:
             artist = track.author.split(",")[0]

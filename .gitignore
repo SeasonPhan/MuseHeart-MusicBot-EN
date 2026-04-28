@@ -153,7 +153,6 @@ database.json
 /local_dbs/
 /local_database/
 application.yml
-/playlist_cache.json
 .local/
 .player_sessions/
 .jabba/
@@ -165,10 +164,20 @@ application.yml
 /.gitbak/
 /.tempjar/
 /emojis.json
+ai_prompt.txt
 /.spotify_cache.json
-/.playlist_cache.pkl
 /guild_bots.json
 /modules_dev/
 /.tmp/
 /.deployed
 /.lastfm_cache
+/.ytdl_cache/
+/.ytdl_cookie
+
+# g4f cookies
+/har_and_cookies/
+/ai_extensions/
+/dev_stuffs/
+/dev/
+NodeLink/
+config.js

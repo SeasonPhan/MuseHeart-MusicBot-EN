@@ -95,8 +95,14 @@ class CustomContext(commands.Context):
         except:
             pass
 
-        if self.channel.permissions_for(self.guild.me).read_message_history:
-            return await super().reply(fail_if_not_exists=False, content=content, **kwargs)
+        try:
+            if not kwargs["view"]:
+                del kwargs["view"]
+        except KeyError:
+            pass
+
+        #if self.channel.permissions_for(self.guild.me).read_message_history:
+        #    return await super().reply(fail_if_not_exists=False, content=content, **kwargs)
 
         return await super().send(content=content, **kwargs)
 
@@ -109,6 +115,12 @@ class CustomContext(commands.Context):
         try:
             kwargs.pop("fail_if_not_exists")
         except:
+            pass
+
+        try:
+            if not kwargs["view"]:
+                del kwargs["view"]
+        except KeyError:
             pass
 
         if not self.channel.permissions_for(self.guild.me).read_message_history:
@@ -164,7 +176,6 @@ class PlayerControls:
     miniqueue = "musicplayer_miniqueue"
     song_request_thread = "musicplayer_song_request_thread"
     fav_manager = "musicplayer_fav_manager"
-    integration_manager = "musicplayer_integration_manager"
     autoplay = "musicplayer_autoplay"
     add_favorite = "musicplayer_add_favorite"
     set_voice_status = "musicplayer_set_voice_status"
@@ -173,6 +184,7 @@ class PlayerControls:
     embed_enqueue_track = "musicplayer_embed_enqueue_track"
     embed_enqueue_playlist = "musicplayer_embed_enqueue_playlist"
     embed_forceplay = "musicplayer_embed_forceplay"
+    lastfm_scrobble = "musicplayer_lastfm_scrobble"
 
 
 class EmbedPaginator(disnake.ui.View):
@@ -232,7 +244,6 @@ class EmbedPaginator(disnake.ui.View):
 
 song_request_buttons = [
     disnake.ui.Button(label="Request a song", emoji="🎶", custom_id=PlayerControls.add_song),
-    disnake.ui.Button(label="Favorite/Integration", emoji="⭐", custom_id=PlayerControls.enqueue_fav)
 ]
 
 
@@ -287,7 +298,7 @@ async def send_message(
         **kwargs,
 ):
 
-    # correção temporária usando variavel kwargs.
+    # temporary fix using kwargs variable.
 
     try:
         bot = inter.music_bot
@@ -300,14 +311,17 @@ async def send_message(
     except KeyError:
         pass
 
+    try:
+        if not kwargs["view"]:
+            del kwargs["view"]
+    except KeyError:
+        pass
+
     if hasattr(inter, 'self_mod'):
         if inter.response.is_done():
             await inter.edit_original_message(content=text, **kwargs)
         else:
             await inter.response.edit_message(content=text, **kwargs)
-
-    elif inter.response.is_done() and isinstance(inter, disnake.AppCmdInter):
-        await inter.edit_original_message(content=text, **kwargs)
 
     else:
 
@@ -337,11 +351,12 @@ async def send_message(
 
         except AttributeError:
             pass
-
         try:
-            await inter.send(text, ephemeral=True, **kwargs)
+            if inter.response.is_done() and isinstance(inter, disnake.ApplicationCommandInteraction):
+                await inter.edit_original_message(content=text, **kwargs)
+            else:
+                await inter.send(text, ephemeral=True, **kwargs)
         except (disnake.InteractionTimedOut, disnake.HTTPException):
-
             try:
                 if isinstance(inter.channel, disnake.Thread):
                     send_message_perm = inter.channel.parent.permissions_for(inter.guild.me).send_messages_in_threads
@@ -417,7 +432,7 @@ async def send_idle_embed(
             disnake.ui.Select(
                 placeholder="Server Songs/Playlists.",
                 options=opts, custom_id="player_guild_pin",
-                min_values=0, max_values=1
+                min_values=0, max_values=1, required = False,
             )
         )
 
@@ -504,8 +519,7 @@ async def send_idle_embed(
 def string_to_file(txt, filename="result.txt"):
     if isinstance(txt, dict):
         txt = json.dumps(txt, indent=4, ensure_ascii=False)
-    txt = BytesIO(bytes(str(txt), 'utf-8'))
-    return disnake.File(fp=txt, filename=filename or "result.txt")
+    return disnake.File(fp=BytesIO(txt.encode('utf-8')), filename=filename or "result.txt")
 
 
 async def fav_list(inter, query: str):
@@ -529,9 +543,9 @@ async def pin_list(inter, query: str, *, prefix=""):
                    if not query or query.lower() in pinname.lower()][:20])
 
 
-def paginator(txt: str):
+def paginator(txt: str, max_size=1910):
     pages = commands.Paginator(prefix=None, suffix=None)
-    pages.max_size = 1910
+    pages.max_size = max_size
     for line in txt.splitlines():
         if len(line) >= pages.max_size - 3:
             l = [(line[i:i + pages.max_size - 3]) for i in range(0, len(line), pages.max_size - 3)]
@@ -560,7 +574,9 @@ music_source_emoji_data = {
     "twitch": "<:Twitch:803656463695478804>",
     "jiosaavn": "<:jiosaavn:1235276169473949747>",
     "tidal": "<:tidal:1235352567048048691>",
-    "youtubemusic": "<:Youtubemusicicon:1245606364470841354>"
+    "youtubemusic": "<:Youtubemusicicon:1245606364470841354>",
+    "last.fm": "<:Lastfm:1278883704097341541>",
+    "bandcamp": "<:bandcamp:767129639490420796>",
 }
 
 def music_source_emoji(name: str):
@@ -635,7 +651,7 @@ def music_source_emoji_id(id_: str):
 
     return "<:play:734221719774035968>"
 
-async def select_bot_pool(inter: Union[CustomContext, disnake.MessageInteraction, disnake.AppCmdInter], first=False, return_new=False, edit_original=False):
+async def select_bot_pool(inter: Union[CustomContext, disnake.MessageInteraction, disnake.ApplicationCommandInteraction], first=False, return_new=False, edit_original=False):
 
     if isinstance(inter, CustomContext):
         if len(inter.bot.pool.get_guild_bots(inter.guild_id)) < 2:
@@ -645,7 +661,7 @@ async def select_bot_pool(inter: Union[CustomContext, disnake.MessageInteraction
 
     for pb in inter.bot.pool.get_guild_bots(inter.guild_id):
 
-        if pb.get_guild(inter.guild_id):
+        if pb.appinfo and pb.get_guild(inter.guild_id):
             bots[pb.user.id] = pb
 
     if not bots:
@@ -742,7 +758,7 @@ async def select_bot_pool(inter: Union[CustomContext, disnake.MessageInteraction
         except KeyError:
             raise GenericError("**The selected bot was removed from the server before its selection...**")
 
-def queue_track_index(inter: disnake.AppCmdInter, bot: BotCore, query: str, match_count: int = 1,
+def queue_track_index(inter: disnake.ApplicationCommandInteraction, bot: BotCore, query: str, match_count: int = 1,
                       case_sensitive: bool = False):
 
     player: LavalinkPlayer = bot.music.players[inter.guild_id]
@@ -805,6 +821,9 @@ def queue_track_index(inter: disnake.AppCmdInter, bot: BotCore, query: str, matc
     return tracklist
 
 def update_inter(old: Union[disnake.Interaction, CustomContext], new: disnake.Interaction):
+
+    if not new:
+        return
 
     if isinstance(old, CustomContext):
         old.inter = new

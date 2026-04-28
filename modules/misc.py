@@ -346,7 +346,7 @@ class Misc(commands.Cog):
                             await entry.user.send(embeds=embeds, components=components)
                             if send_video:
                                 await asyncio.sleep(1)
-                                await entry.user.send(f"{send_video}\n\nCheck out the [**video**]({self.bot.config['MULTIVOICE_VIDEO_DEMO_URL']}) demonstrating this feature.")
+                                await entry.user.send(send_video)
                             return
                         except disnake.Forbidden:
                             pass
@@ -447,12 +447,13 @@ class Misc(commands.Cog):
 
 
     @commands.slash_command(
-        description=f"{desc_prefix}Display information about me.", cooldown=about_cd, dm_permission=False,
+        description=f"{desc_prefix}Display information about me.", cooldown=about_cd,
         extras={"allow_private": True}
     )
+    @commands.contexts(guild=True)
     async def about(
             self,
-            interaction: disnake.AppCmdInter
+            interaction: disnake.ApplicationCommandInteraction
     ):
 
         inter, bot = await select_bot_pool(interaction, first=True)
@@ -549,25 +550,24 @@ class Misc(commands.Cog):
 
             for p in b.music.players.values():
 
-                if p.auto_pause:
+                if not p.last_channel:
+                    continue
+
+                if p.auto_pause or not p.current:
                     inactive_players_other_bots += 1
 
                 elif p.paused:
                     try:
-                        if any(m for m in p.guild.me.voice.channel.members if not m.bot):
+                        if any(m for m in p.last_channel if not m.bot):
                             paused_players_other_bots += 1
                             continue
-                    except AttributeError:
+                    except (AttributeError, TypeError):
                         pass
                     inactive_players_other_bots += 1
 
                 else:
                     active_players_other_bots += 1
-                    try:
-                        vc = p.guild.me.voice.channel
-                    except AttributeError:
-                        continue
-                    for u in vc.members:
+                    for u in p.last_channel.members:
                         if u.bot or u.voice.deaf or u.voice.self_deaf:
                             continue
                         listeners.add(u.id)
@@ -608,10 +608,10 @@ class Misc(commands.Cog):
             embed.description += "### Statistics (totals across all bots):\n"
 
             if public_bot_count:
-                embed.description += f"> 🤖 **⠂Bot{(s:='s'[:public_bot_count^1])} public{s}:** `{public_bot_count:,}`\n"
+                embed.description += f"> 🤖 **⠂Public bot{(s:='s'[:public_bot_count^1])}:** `{public_bot_count:,}`\n"
 
             if private_bot_count:
-                embed.description += f"> 🤖 **⠂Bot{(s:='s'[:private_bot_count^1])} private{s}:** `{private_bot_count:,}`\n"
+                embed.description += f"> 🤖 **⠂Private bot{(s:='s'[:private_bot_count^1])}:** `{private_bot_count:,}`\n"
 
             embed.description += f"> 🏙️ **⠂Server{'s'[:guilds_size^1]}:** `{guilds_size:,}`\n"
 
@@ -624,16 +624,16 @@ class Misc(commands.Cog):
         embed.description += "### Other information:\n"
 
         if active_players_other_bots:
-            embed.description += f"> ▶️ **⠂Active{s} Player{(s:='s'[:active_players_other_bots^1])}:** `{active_players_other_bots:,}`\n"
+            embed.description += f"> ▶️ **⠂Active player{(s:='s'[:active_players_other_bots^1])}:** `{active_players_other_bots:,}`\n"
 
         if paused_players_other_bots:
             embed.description += f"> ⏸️ **⠂Player{'s'[:paused_players_other_bots^1]} paused:** `{paused_players_other_bots:,}`\n"
 
         if inactive_players_other_bots:
-            embed.description += f"> 💤 **⠂Inactive {s}Player{(s:='s'[:inactive_players_other_bots^1])}:** `{inactive_players_other_bots:,}`\n"
+            embed.description += f"> 💤 **⠂Inactive player{(s:='s'[:inactive_players_other_bots^1])}:** `{inactive_players_other_bots:,}`\n"
 
         if listeners:
-            embed.description += f"> 🎧 **⠂Listener{'s'[:(lcount:=len(listeners))^1]} atua{'is'[:lcount^1] or 'l'}:** `{lcount:,}`\n"
+            embed.description += f"> 🎧 **⠂Current listener{'s'[:(lcount:=len(listeners))^1]}:** `{lcount:,}`\n"
 
         if bot.pool.commit:
             embed.description += f"> 📥 **⠂Current commit:** [`{bot.pool.commit[:7]}`]({bot.pool.remote_git_url}/commit/{bot.pool.commit})\n"
@@ -778,15 +778,16 @@ class Misc(commands.Cog):
 
     @commands.slash_command(
         description=f"{desc_prefix}Display my invite link for you to add me to your server.",
-        dm_permission=False, extras={"allow_private": True}
+        extras={"allow_private": True}
     )
-    async def invite(self, inter: disnake.AppCmdInter):
+    @commands.contexts(guild=True)
+    async def invite(self, inter: disnake.ApplicationCommandInteraction):
 
         await inter.response.defer(ephemeral=True)
 
         await self.invite_button(inter, is_command=True)
 
-    @commands.user_command(name="Avatar", dm_permission=False)
+    @commands.user_command(name="Avatar")
     async def avatar(self, inter: disnake.UserCommandInteraction):
 
         user = inter.target
@@ -801,12 +802,12 @@ class Misc(commands.Cog):
                 break
 
         if not guild:
-            user = await bot.fetch_user(inter.author.id)
+            user = await bot.fetch_user(user.id)
 
-            user_avatar_url = inter.author.display_avatar.replace(static_format="png", size=512).url
+            user_avatar_url = user.display_avatar.replace(static_format="png", size=512).url
 
             if user_banner_url:=user.banner:
-                user_banner_url = inter.author.banner.replace(static_format="png", size=4096).url
+                user_banner_url = user.banner.replace(static_format="png", size=4096).url
 
             guild_avatar_url = None
             guild_banner_url = None
@@ -816,8 +817,7 @@ class Misc(commands.Cog):
                                             headers={"Authorization": f"Bot {bot.http.token}"}) as r:
                 data = await r.json()
 
-            user_avatar_url = f"https://cdn.discordapp.com/avatars/{user.id}/{data['user']['avatar']}." + (
-                "gif" if data['user']['avatar'].startswith('a_') else "png") + "?size=512"
+            user_avatar_url = user.display_avatar.replace(static_format="png", size=512).url
 
             if user_banner_url := data['user'].get('banner'):
                 user_banner_url = f"https://cdn.discordapp.com/banners/{user.id}/{user_banner_url}." + (
@@ -932,7 +932,7 @@ class GuildLog(commands.Cog):
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: disnake.Guild):
 
-        print(f"Removed from the server: {guild.name} - [{guild.id}]")
+        print(f"😭 - Bot {self.bot.user.name} was removed from the server: {guild.name} - [{guild.id}]")
 
         try:
             await self.bot.music.players[guild.id].destroy()
@@ -954,7 +954,7 @@ class GuildLog(commands.Cog):
     @commands.Cog.listener()
     async def on_guild_join(self, guild: disnake.Guild):
 
-        print(f"{self.bot.user.name} - Added to the server: {guild.name} - [{guild.id}]")
+        print(f"🎉 - Bot {self.bot.user.name} was added to the server: {guild.name} - [{guild.id}]")
 
         try:
             guild_data = await self.bot.get_data(guild.id, db_name=DBModel.guilds)
@@ -994,14 +994,21 @@ class GuildLog(commands.Cog):
         except AttributeError:
             pass
 
-        async with ClientSession() as session:
-            webhook = disnake.Webhook.from_url(self.hook_url, session=session)
-            await webhook.send(
-                content=", ".join(f"<@{owner_id}>" for owner_id in self.bot.owner_ids) or self.bot.owner.mention,
-                username=self.bot.user.name,
-                avatar_url=self.bot.user.display_avatar.replace(size=256, static_format="png").url,
+        if (channel:=self.bot.get_channel(self.bot.config["BOT_ADD_REMOVE_LOG_CHANNEL_ID"])) and channel.permissions_for(channel.guild.me).send_messages:
+            await channel.send(
+                ", ".join(f"<@{owner_id}>" for owner_id in self.bot.owner_ids) or self.bot.owner.mention,
                 embed=embed
             )
+
+        else:
+            async with ClientSession() as session:
+                webhook = disnake.Webhook.from_url(self.hook_url, session=session)
+                await webhook.send(
+                    content=", ".join(f"<@{owner_id}>" for owner_id in self.bot.owner_ids) or self.bot.owner.mention,
+                    username=self.bot.user.name,
+                    avatar_url=self.bot.user.display_avatar.replace(size=256, static_format="png").url,
+                    embed=embed
+                )
 
 
 def setup(bot: BotCore):

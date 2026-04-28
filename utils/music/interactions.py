@@ -24,7 +24,7 @@ from utils.music.errors import GenericError
 from utils.music.models import LavalinkPlayer, LavalinkTrack
 from utils.music.skin_utils import skin_converter
 from utils.others import check_cmd, CustomContext, send_idle_embed, music_source_emoji_url, \
-    PlayerControls, get_source_emoji_cfg
+    PlayerControls, get_source_emoji_cfg, paginator
 
 if TYPE_CHECKING:
     from utils.client import BotCore
@@ -96,7 +96,7 @@ class QueueInteraction(disnake.ui.View):
         if not self.message:
             return
 
-        self.embed.set_footer(text="Tempo para interagir esgotado!")
+        self.embed.set_footer(text="Interaction time expired!")
 
         for c in self.children:
             c.disabled = True
@@ -257,7 +257,7 @@ class QueueInteraction(disnake.ui.View):
 
             opts.append(
                 disnake.SelectOption(
-                    label=f"{index}. {t.author}"[:25], description=f"[{duration}] | {t.title}"[:50],
+                    label=fix_characters(f"{index}. {t.single_title}", 47), description=f"[{duration}]. {t.authors_string}"[:50],
                     value=f"queue_select_{t.unique_id}", default=t == self.current_track
                 )
             )
@@ -413,16 +413,128 @@ class QueueInteraction(disnake.ui.View):
 
         return True
 
-class SelectInteraction(disnake.ui.View):
+class EmbedPaginatorInteraction(disnake.ui.View):
+    def __init__(self, user: disnake.Member, embeds: List[disnake.Embed], *, timeout=180, max_itens=25):
+        super().__init__(timeout=timeout)
+        self.user = user
+        self.current_page = 0
+        self.max_page = len(embeds)-1
+        self.inter: Optional[disnake.MessageInteraction] = None
+        self.embeds = embeds
+        self.load_components()
 
-    def __init__(self, user: disnake.Member, opts: List[disnake.SelectOption], *, timeout=180):
+    async def interaction_check(self, interaction: disnake.MessageInteraction) -> bool:
+
+        if interaction.user.id == self.user.id:
+            return True
+
+        await interaction.send(f"Only {self.user.mention} can interact here.", ephemeral = True)
+
+    def load_components(self):
+
+        self.clear_items()
+
+        back_button = disnake.ui.Button(emoji="⬅")
+        if self.current_page == 0:
+            back_button.disabled = True
+        else:
+            back_button.label = str(self.current_page)
+        back_button.callback = self.back_callback
+        self.add_item(back_button)
+
+        next_button = disnake.ui.Button(emoji="➡")
+        if self.current_page == self.max_page:
+            next_button.disabled = True
+            next_button.label = f"{self.current_page + 1} / {self.max_page + 1}"
+        else:
+            next_button.label = f"{self.current_page + 2} / {self.max_page + 1}"
+        next_button.callback = self.next_callback
+        self.add_item(next_button)
+
+        button = disnake.ui.Button(label="Close", emoji="❌")
+        button.callback = self.cancel_callback
+        self.add_item(button)
+
+    async def back_callback(self, interaction: disnake.MessageInteraction):
+        self.inter = interaction
+        if self.current_page == 0:
+            self.current_page = self.max_page
+        else:
+            self.current_page -= 1
+        self.load_components()
+        kwargs = {}
+        if self.embeds:
+            kwargs["embed"] = self.embeds[self.current_page]
+        await interaction.response.edit_message(view=self, **kwargs)
+
+    async def next_callback(self, interaction: disnake.MessageInteraction):
+        self.inter = interaction
+        if self.current_page == self.max_page:
+            self.current_page = 0
+        else:
+            self.current_page += 1
+        self.load_components()
+        kwargs = {}
+        if self.embeds:
+            kwargs["embed"] = self.embeds[self.current_page]
+        await interaction.response.edit_message(view=self, **kwargs)
+
+    async def cancel_callback(self, interaction: disnake.MessageInteraction):
+        self.inter = interaction
+        self.selected = False
+        self.inter = interaction
+        self.stop()
+
+    async def callback(self, interaction: disnake.MessageInteraction):
+        self.selected = interaction.data.values[0]
+        self.inter = interaction
+        self.stop()
+
+
+class ButtonInteraction(disnake.ui.View):
+
+    def __init__(self, user: disnake.Member, buttons: List[disnake.ui.Button], *, timeout=180):
         super().__init__(timeout=timeout)
         self.user = user
         self.selected = None
-        self.item_pages = list(disnake.utils.as_chunks(opts, 25))
+        self.current_page = 0
+        self.inter = None
+        self.embeds = []
+
+        self.load_components(buttons)
+
+    def load_components(self, buttons: List[disnake.ui.Button]):
+
+        for b in buttons:
+            b.callback = self.callback
+            self.add_item(b)
+
+        button = disnake.ui.Button(label="Cancel", emoji="❌")
+        button.callback = self.cancel_callback
+        self.add_item(button)
+
+    async def cancel_callback(self, interaction: disnake.MessageInteraction):
+        self.selected = False
+        self.inter = interaction
+        self.stop()
+
+    async def callback(self, interaction: disnake.MessageInteraction):
+        self.selected = interaction.data.custom_id
+        self.inter = interaction
+        self.stop()
+
+
+class SelectInteraction(disnake.ui.View):
+
+    def __init__(self, user: disnake.Member, opts: List[disnake.SelectOption], *, timeout=180, max_itens=25):
+        super().__init__(timeout=timeout)
+        self.user = user
+        self.selected = None
+        self.item_pages = list(disnake.utils.as_chunks(opts, max_itens))
         self.current_page = 0
         self.max_page = len(self.item_pages)-1
         self.inter = None
+        self.embeds = []
 
         self.load_components()
 
@@ -438,10 +550,19 @@ class SelectInteraction(disnake.ui.View):
         if len(self.item_pages) > 1:
 
             back_button = disnake.ui.Button(emoji="⬅")
+            if self.current_page == 0:
+                back_button.disabled = True
+            else:
+                back_button.label = str(self.current_page)
             back_button.callback = self.back_callback
             self.add_item(back_button)
 
             next_button = disnake.ui.Button(emoji="➡")
+            if self.current_page == self.max_page:
+                next_button.disabled = True
+                next_button.label = f"{self.current_page + 1} / {self.max_page + 1}"
+            else:
+                next_button.label = f"{self.current_page + 2} / {self.max_page + 1}"
             next_button.callback = self.next_callback
             self.add_item(next_button)
 
@@ -462,15 +583,21 @@ class SelectInteraction(disnake.ui.View):
         else:
             self.current_page -= 1
         self.load_components()
-        await interaction.response.edit_message(view=self)
+        kwargs = {}
+        if self.embeds:
+            kwargs["embed"] = self.embeds[self.current_page]
+        await interaction.response.edit_message(view=self, **kwargs)
 
     async def next_callback(self, interaction: disnake.MessageInteraction):
-        if self.current_page == self.max_page:
+        if self.current_page >= self.max_page:
             self.current_page = 0
         else:
             self.current_page += 1
         self.load_components()
-        await interaction.response.edit_message(view=self)
+        kwargs = {}
+        if self.embeds:
+            kwargs["embed"] = self.embeds[self.current_page]
+        await interaction.response.edit_message(view=self, **kwargs)
 
     async def cancel_callback(self, interaction: disnake.MessageInteraction):
         self.selected = False
@@ -511,8 +638,8 @@ class AskView(disnake.ui.View):
         self.interaction_resp = interaction
         self.stop()
 
-youtube_regex = r"https?://www\.youtube\.com/(?:channel/|@)[^/]+"
-soundcloud_regex = r"^(?:https?:\/\/)?(?:www\.)?soundcloud\.com\/([a-zA-Z0-9_-]+)"
+youtube_regex = re.compile(r"https?://www\.youtube\.com/(?:channel/|@)[^/]+")
+soundcloud_regex = re.compile(r"^(?:https?:\/\/)?(?:www\.)?soundcloud\.com\/([a-zA-Z0-9_-]+)")
 
 async def process_idle_embed(bot: BotCore, guild: disnake.Guild, guild_data: dict):
 
@@ -1074,7 +1201,8 @@ class FavModalAdd(disnake.ui.Modal):
                     )
                     return
 
-                data = {"title": f"[SP]: {result['display_name'][:90]}", "url": result["external_urls"]["spotify"]}
+                data = {"title": f"[SP]: {result['display_name'][:90]}", "url": result["external_urls"]["spotify"],
+                        "avatar": result["images"][-1]['url']}
 
             elif (matches:=deezer_regex.match(url)):
 
@@ -1102,26 +1230,17 @@ class FavModalAdd(disnake.ui.Modal):
                     traceback.print_exc()
                     return
 
-                data = {"title": f"[DZ]: {result['name'][:90]}", "url": result['link']}
+                data = {"title": f"[DZ]: {result['name'][:90]}", "url": result['link'], "avatar": result["picture"]}
 
             else:
 
-                if not self.view.bot.config["USE_YTDL"]:
-                    await inter.edit_original_message(
-                        embed=disnake.Embed(
-                            description="**There is no support for that type of link at the moment...**",
-                            color=self.view.bot.get_color()
-                        )
-                    )
-                    return
-
-                match = re.search(youtube_regex, url)
+                match = youtube_regex.search(url)
 
                 if match:
                     base_url = f"{match.group(0)}/playlists"
                     source = "[YT]:"
                 else:
-                    match = re.search(soundcloud_regex, url)
+                    match = soundcloud_regex.search(url)
                     if match:
                         group = match.group(1)
                         base_url = f"https://soundcloud.com/{group}/sets"
@@ -1173,7 +1292,12 @@ class FavModalAdd(disnake.ui.Modal):
 
             title = fix_characters(data['title'], 80)
 
-            self.view.data["integration_links"][title] = data['url']
+            self.view.data["integration_links"][title] = {"url": data['url']}
+
+            try:
+                self.view.data["integration_links"][title]["avatar"] = data["avatar"]
+            except KeyError:
+                pass
 
             await self.view.bot.update_global_data(inter.author.id, self.view.data, db_name=DBModel.users)
 
@@ -1193,16 +1317,16 @@ class FavModalAdd(disnake.ui.Modal):
                 ), view=None
             )
 
-            self.view.log = f"[`{data['title']}`]({data['url']}) it has been added to your integrations."
+            self.view.log = f"[`{data['title']}`](<{data['url']}>) has been added to your integrations."
 
         if not isinstance(self.view.ctx, CustomContext):
-            await self.view.ctx.edit_original_message(embed=self.view.build_embed(), view=self.view)
+            await self.view.ctx.edit_original_message(content=self.view.build_txt(), view=self.view)
         elif self.view.message:
-            await self.view.message.edit(embed=self.view.build_embed(), view=self.view)
+            await self.view.message.edit(content=self.view.build_txt(), view=self.view)
 
 class FavMenuView(disnake.ui.View):
 
-    def __init__(self, bot: BotCore, ctx: Union[disnake.AppCmdInter, CustomContext], data: dict, log: str = "",
+    def __init__(self, bot: BotCore, ctx: Union[disnake.ApplicationCommandInteraction, CustomContext], data: dict, log: str = "",
                  prefix="", mode: str = ViewMode.fav_manager, is_owner=False):
         super().__init__(timeout=180)
         self.mode = mode
@@ -1302,12 +1426,14 @@ class FavMenuView(disnake.ui.View):
 
             if self.data["integration_links"]:
                 opts = []
-                for k, v in list(self.data["integration_links"].items())[:25]: # TODO: Lidar depois com os dados existentes que excedem a quantidade permitida
+                for k, v in list(self.data["integration_links"].items())[:25]: # TODO: Handle later with existing data that exceeds the allowed amount
+                    if isinstance(v, dict):
+                        v = v["url"]
                     emoji, platform = music_source_emoji_url(v)
                     opts.append(disnake.SelectOption(label=k[5:], emoji=emoji, description=platform, value=k))
                 integration_select = disnake.ui.Select(options=opts, min_values=1, max_values=1)
                 integration_select.options[0].default = True
-                self.current = integration_select.options[0].label
+                self.current = integration_select.options[0].value
                 integration_select.callback = self.select_callback
                 self.add_item(integration_select)
 
@@ -1391,7 +1517,7 @@ class FavMenuView(disnake.ui.View):
 
             user, data, url = await self.bot.wait_for("fav_add", check=lambda user, data, url: user.id == self.ctx.author.id)
 
-            self.log = f"{url} has been added to your favorites."
+            self.log = f"<{url}> has been added to your favorites."
 
             if not isinstance(self.ctx, CustomContext):
                 await self.ctx.edit_original_message(content=self.build_txt(), view=self)
@@ -1434,8 +1560,7 @@ class FavMenuView(disnake.ui.View):
 
         if self.mode == ViewMode.integrations_manager:
 
-            if self.bot.config["USE_YTDL"]:
-                supported_platforms.extend(["[`Youtube`](<https://www.youtube.com/>)", "[`Soundcloud`](<https://soundcloud.com/>)"])
+            supported_platforms.extend(["[`Youtube`](<https://www.youtube.com/>)", "[`Soundcloud`](<https://soundcloud.com/>)"])
 
             if self.bot.spotify:
                 supported_platforms.append("[`Spotify`](<https://open.spotify.com/>)")
@@ -1461,12 +1586,12 @@ class FavMenuView(disnake.ui.View):
                     name, url = data
                     e = get_source_emoji_cfg(self.bot, url)
                     if e:
-                        return f"` {index:02} ` {e} [`{name}`](<{url}>)"
-                    return f"` {index:02} ` [`{name}`](<{url}>)"
+                        return f"` {index:02} ` {e} [`{fix_characters(name, 40)}`](<{url}>)"
+                    return f"` {index:02} ` [`{fix_characters(name, 40)}`](<{url}>)"
 
-                txt += "\n".join(
-                    f"> {format_fav(n+1, d)}" for n, d in enumerate(islice(self.data["fav_links"].items(), 25))
-                )
+                txt += paginator("\n".join(
+                    f"> {format_fav(n+1, d)}" for n, d in enumerate(islice(self.data["fav_links"].items(), 22))
+                ), max_size=1400)[0]
 
             if not self.light_mode:
                 txt += "\n\n**How to use them?**\n" \
@@ -1487,12 +1612,12 @@ class FavMenuView(disnake.ui.View):
                     name, data = data
                     e = get_source_emoji_cfg(self.bot, data['url'])
                     if e:
-                        return f"` {index:02} ` {e} [`{name}`](<{data['url']}>)"
-                    return f"` {index:02} ` [`{name}`](<{data['url']}>)"
+                        return f"` {index:02} ` {e} [`{fix_characters(name, 40)}`](<{data['url']}>)"
+                    return f"` {index:02} ` [`{fix_characters(name, 40)}`](<{data['url']}>)"
 
-                txt += f"**Current links on the bot {self.bot.user.mention}:**\n" + "\n".join(
-                    f"> {format_gfav(n+1, d)}" for n, d in enumerate(islice(self.guild_data["player_controller"]["fav_links"].items(), 25))
-                )
+                txt += f"**Current links on the bot {self.bot.user.mention}:**\n" + paginator("\n".join(
+                    f"> {format_gfav(n+1, d)}" for n, d in enumerate(islice(self.guild_data["player_controller"]["fav_links"].items(), 22))
+                ), max_size=1400)[0]
 
                 txt += "\n\n**How to use them?**\n" \
                         f"* Using the player selection menu during the waiting mode.\n" \
@@ -1508,13 +1633,15 @@ class FavMenuView(disnake.ui.View):
             else:
                 def format_itg(bot, index, data):
                     name, url = data
+                    if isinstance(url, dict):
+                        url = url["url"]
                     e = get_source_emoji_cfg(bot, url)
                     if e:
-                        return f"` {index:02} ` {e} [`{name[5:]}`](<{url}>)"
-                    return f"` {index:02} ` [`{name}`](<{url}>)"
+                        return f"` {index:02} ` {e} [`{fix_characters(name[5:], 40)}`](<{url}>)"
+                    return f"` {index:02} ` [`{fix_characters(name, 40)}`](<{url}>)"
 
-                txt += f"### Your current integrations:\n" + "\n".join(
-                    f"> {format_itg(self.bot, n+1, d)}" for n, d in enumerate(islice(self.data["integration_links"].items(), 25)))
+                txt += f"### Your current integrations:\n" + paginator("\n".join(
+                    f"> {format_itg(self.bot, n+1, d)}" for n, d in enumerate(islice(self.data["integration_links"].items(), 22))), max_size=1400)[0]
 
                 if not self.light_mode:
                     txt += "\n\n**How to use them?**\n" \
@@ -1628,8 +1755,14 @@ class FavMenuView(disnake.ui.View):
             self.log = f"Link {url} has been successfully removed from the server's favorites list!"
 
         elif self.mode == ViewMode.integrations_manager:
+
+            item = self.data["integration_links"][self.current]
+
+            if isinstance(inter, dict):
+                item = item['url']
+
             try:
-                url = f'[`{self.current}`]({self.data["integration_links"][self.current]})'
+                url = f'[`{self.current}`]({item})'
                 del self.data["integration_links"][self.current]
             except:
                 await inter.send(f"**There is no integration in the list with the name:** {self.current}", ephemeral=True)
@@ -1752,7 +1885,7 @@ class FavMenuView(disnake.ui.View):
 
     async def play_callback(self, inter: disnake.MessageInteraction):
         await check_pool_bots(inter, check_player=False)
-        await self.bot.get_cog("Music").player_controller(inter, PlayerControls.enqueue_fav, query=f"> itg: {self.current}" if self.mode == ViewMode.integrations_manager else f"> fav: {self.current}")
+        await self.bot.get_cog("Music").player_controller(inter, PlayerControls.add_song, query=f"> itg: {self.current}" if self.mode == ViewMode.integrations_manager else f"> fav: {self.current}")
 
     async def export_callback(self, inter: disnake.MessageInteraction):
         cog = self.bot.get_cog("Music")
@@ -1821,12 +1954,7 @@ class FavMenuView(disnake.ui.View):
         except:
             pass
 
-        await inter.response.edit_message(
-            embed=disnake.Embed(
-                description="**Manager closed.**",
-                color=self.bot.get_color(),
-            ), view=None
-        )
+        await inter.response.edit_message(content="**Manager closed.**", view=None)
         self.stop()
 
     async def mode_callback(self, inter: disnake.MessageInteraction):
@@ -2093,7 +2221,7 @@ class SetStageTitle(disnake.ui.View):
 
             if not guild:
                 await inter.send("**There are no bots available on the server. Add at least one by clicking the button below.**",
-                                components=[disnake.ui.Button(custom_id="bot_invite", label="Adicionar bots")], ephemeral=True)
+                                components=[disnake.ui.Button(custom_id="bot_invite", label="Add bots")], ephemeral=True)
                 return
 
             inter.author = guild.get_member(inter.author.id)
@@ -2215,7 +2343,7 @@ class SetStageTitle(disnake.ui.View):
 
 class SkinEditorMenu(disnake.ui.View):
 
-    def __init__(self, ctx: Union[CustomContext, disnake.AppCmdInter], bot: BotCore, guild: disnake.Guild, global_data: dict):
+    def __init__(self, ctx: Union[CustomContext, disnake.ApplicationCommandInteraction], bot: BotCore, guild: disnake.Guild, global_data: dict):
         super().__init__(timeout=600)
         self.ctx = ctx
         self.bot = bot
@@ -3055,7 +3183,7 @@ class SelectBotVoice(disnake.ui.View):
 
     def __init__(
             self,
-            inter: Union[disnake.AppCmdInter, disnake.MessageInteraction, disnake.ModalInteraction, CustomContext],
+            inter: Union[disnake.ApplicationCommandInteraction, disnake.MessageInteraction, disnake.ModalInteraction, CustomContext],
             guild: disnake.Guild, freebots: List[BotCore]
     ):
         super().__init__(timeout=45)
@@ -3099,7 +3227,7 @@ class SelectBotVoice(disnake.ui.View):
             self.stop()
             return
 
-        bot_select = disnake.ui.Select(min_values=0, max_values=1, options=bot_select_opts)
+        bot_select = disnake.ui.Select(min_values=0, max_values=1, required = False, options=bot_select_opts)
         bot_select.callback = self.bot_select_callback
         self.add_item(bot_select)
 

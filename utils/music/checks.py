@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import traceback
 from typing import Union, Optional, TYPE_CHECKING
 
 import disnake
 from disnake.ext import commands
 
+import wavelink
 from utils.db import DBModel
 from utils.music.converters import time_format
 from utils.music.errors import NoVoice, NoPlayer, NoSource, NotRequester, NotDJorStaff, \
@@ -16,7 +18,7 @@ from utils.others import CustomContext
 
 if TYPE_CHECKING:
     from utils.music.models import LavalinkPlayer
-    from utils.client import BotCore
+    from utils.client import BotCore, BotPool
 
 
 def can_send_message(
@@ -40,6 +42,8 @@ def can_send_message(
 
 async def check_requester_channel(ctx: CustomContext):
 
+    error_msg = "**You can only use slash (/) commands in this channel at the moment!**"
+
     guild_data = await ctx.bot.get_data(ctx.guild_id, db_name=DBModel.guilds)
 
     if guild_data['player_controller']["channel"] == str(ctx.channel.id):
@@ -49,15 +53,30 @@ async def check_requester_channel(ctx: CustomContext):
         except AttributeError:
             return True
 
-        else:
-            if isinstance(parent, disnake.ForumChannel):
+        if isinstance(parent, disnake.ForumChannel):
 
-                if ctx.channel.owner_id != ctx.bot.user.id:
+            if ctx.channel.owner_id == ctx.bot.user.id:
+
+                try:
+                    vc = ctx.author.voice.channel
+                except AttributeError:
                     raise PoolException()
-                else:
-                    return True
+                if ctx.bot.user.id not in vc.voice_states:
+                    raise PoolException()
+            else:
+                raise PoolException()
 
-        raise GenericError("**Can only use slash (/) commands in this channel!**", self_delete=True, delete_original=15)
+        raise GenericError(error_msg, self_delete=True, delete_original=15)
+
+    for bot in ctx.bot.pool.get_guild_bots(ctx.guild_id):
+
+        if bot == ctx.bot:
+            continue
+
+        data = await bot.get_data(ctx.guild_id, db_name=DBModel.guilds)
+
+        if data['player_controller']["channel"] == str(ctx.channel.id):
+            raise GenericError(error_msg, self_delete=True, delete_original=15)
 
     return True
 
@@ -73,38 +92,41 @@ def check_forum(inter, bot):
         else:
             raise PoolException()
 
+def update_attr(inter: Union[disnake.MessageInteraction, disnake.ModalInteraction, disnake.ApplicationCommandInteraction],
+                bot: BotCore, guild: disnake.Guild):
+
+    with contextlib.suppress(AttributeError):
+        inter.music_bot = bot
+        inter.music_guild = guild
+
+    return bot, guild
+
 async def check_pool_bots(inter, only_voiced: bool = False, check_player: bool = True, return_first=False,
-                          bypass_prefix=False):
+                          bypass_prefix=False, bypass_attribute=False):
 
-    try:
-        inter.music_bot
-        return True
-    except AttributeError:
-        pass
-
-    if isinstance(inter, disnake.MessageInteraction):
-        if inter.data.custom_id not in ("favmanager_play_button", "musicplayer_embed_enqueue_track", "musicplayer_embed_forceplay"):
-            return
-
-    elif isinstance(inter, disnake.ModalInteraction):
-        return
-
-    if len((guild_bots:=inter.bot.pool.get_guild_bots(inter.guild_id))) < 2 and inter.guild:
+    if not bypass_attribute:
         try:
-            inter.music_bot = inter.bot
-            inter.music_guild = inter.guild
+            inter.music_bot
+            return inter.music_bot, inter.music_guild
         except AttributeError:
             pass
-        return True
+
+        #if isinstance(inter, disnake.MessageInteraction):
+        #    if inter.data.custom_id not in ("favmanager_play_button", "musicplayer_embed_enqueue_track", "musicplayer_embed_forceplay"):
+        #        return update_attr(inter.bot, inter.guild)
+
+        if isinstance(inter, disnake.ModalInteraction):
+            return update_attr(inter, inter.bot, inter.guild)
+
+    if len((guild_bots:=inter.bot.pool.get_guild_bots(inter.guild_id))) < 2 and inter.guild:
+        return update_attr(inter, inter.bot, inter.guild)
 
     if not inter.guild_id:
         raise GenericError("**This command cannot be used in private messages.**")
 
     try:
         if inter.bot.user.id in inter.author.voice.channel.voice_states:
-            inter.music_bot = inter.bot
-            inter.music_guild = inter.guild
-            return True
+            return update_attr(inter, inter.bot, inter.guild)
     except AttributeError:
         pass
 
@@ -117,7 +139,7 @@ async def check_pool_bots(inter, only_voiced: bool = False, check_player: bool =
         is_forum = check_forum(inter, inter.bot)
 
         if is_forum:
-            return True
+            return update_attr(inter, inter.bot, inter.guild)
 
         if not (mention_prefixed:=inter.message.content.startswith(tuple(inter.bot.pool.bot_mentions))):
 
@@ -144,10 +166,7 @@ async def check_pool_bots(inter, only_voiced: bool = False, check_player: bool =
                 if not bot_id or bot_id != inter.bot.user.id:
                     raise PoolException()
 
-                inter.music_bot = inter.bot
-                inter.music_guild = inter.guild
-
-                return True
+                return update_attr(inter, inter.bot, inter.guild)
 
         else:
 
@@ -156,29 +175,25 @@ async def check_pool_bots(inter, only_voiced: bool = False, check_player: bool =
                 if inter.author.voice:
                     user_vc = True
                 else:
-                    return True
+                    return update_attr(inter, inter.bot, inter.guild)
 
             elif not inter.author.voice:
 
                 if return_first:
-                    return True
+                    return update_attr(inter, inter.bot, inter.guild)
 
                 raise NoVoice()
             else:
                 user_vc = True
 
             if inter.bot.user.id in inter.author.voice.channel.voice_states:
-                inter.music_bot = inter.bot
-                inter.music_guild = inter.guild
-                return True
+                return update_attr(inter, inter.bot, inter.guild)
 
             if only_voiced:
                 pass
 
             elif not inter.guild.me.voice:
-                inter.music_bot = inter.bot
-                inter.music_guild = inter.guild
-                return True
+                return update_attr(inter, inter.bot, inter.guild)
 
     free_bot = []
 
@@ -195,14 +210,15 @@ async def check_pool_bots(inter, only_voiced: bool = False, check_player: bool =
         if not bot.bot_ready:
             continue
 
+        if not (guild := bot.get_guild(inter.guild_id)):
+            if bot.user.id != inter.bot.user.id:
+                extra_bots_counter += 1
+            continue
+
+        bot_in_guild = True
+
         if bot.user.id == inter.bot.user.id and mention_prefixed:
             continue
-
-        if not (guild := bot.get_guild(inter.guild_id)):
-            continue
-
-        if bot.user.id != inter.bot.user.id:
-            extra_bots_counter += 1
 
         if not (author := guild.get_member(inter.author.id)):
             continue
@@ -219,28 +235,31 @@ async def check_pool_bots(inter, only_voiced: bool = False, check_player: bool =
 
             raise NoVoice()
 
+        else:
+            user_vc = True
+
         if bot.user.id in author.voice.channel.voice_states:
 
-            inter.music_bot = bot
-            inter.music_guild = guild
+            update_attr(inter, bot, guild)
 
             if isinstance(inter, CustomContext) and bot.user.id != inter.bot.user.id and not mention_prefixed:
                 try:
-                    await inter.music_bot.wait_for(
+                    await bot.wait_for(
                         "pool_payload_ready", timeout=10,
                         check=lambda ctx: f"{ctx.guild_id}-{ctx.channel.id}-{ctx.message.id}" == msg_id
                     )
                 except asyncio.TimeoutError:
                     pass
-                inter.music_bot.dispatch("pool_dispatch", inter, bot.user.id)
+                bot.dispatch("pool_dispatch", inter, bot.user.id)
                 raise PoolException()
 
-            return True
+            return bot, guild
 
         if only_voiced:
             continue
 
-        channel = bot.get_channel(inter.channel.id)
+        if not (channel := bot.get_channel(inter.channel.id)):
+            continue
 
         if isinstance(channel, disnake.Thread):
             send_message_perm = channel.parent.permissions_for(channel.guild.me).send_messages_in_threads
@@ -266,17 +285,14 @@ async def check_pool_bots(inter, only_voiced: bool = False, check_player: bool =
                 inter.bot.dispatch("pool_dispatch", None, None)
                 raise NoPlayer()
 
-            inter.music_bot = inter.bot
-            inter.music_guild = inter.guild
             inter.bot.dispatch("pool_dispatch", inter, None)
 
-            return True
-
+            return update_attr(inter, inter.bot, inter.guild)
     except AttributeError:
         pass
 
     if free_bot:
-        inter.music_bot, inter.music_guild = free_bot.pop(0)
+        bot, guild = update_attr(inter, *free_bot.pop(0))
 
         if isinstance(inter, CustomContext) and not mention_prefixed and not bypass_prefix and inter.music_bot.user.id != inter.bot.user.id:
             try:
@@ -286,18 +302,17 @@ async def check_pool_bots(inter, only_voiced: bool = False, check_player: bool =
                 )
             except asyncio.TimeoutError:
                 pass
-            inter.music_bot.dispatch("pool_dispatch", inter, inter.music_bot.user.id, bot=inter.music_bot)
+            bot.dispatch("pool_dispatch", inter, inter.music_bot.user.id, bot=inter.music_bot)
             raise PoolException()
-        return True
+
+        return bot, guild
 
     elif check_player:
 
         inter.bot.dispatch("pool_dispatch", inter, None)
 
         if return_first:
-            inter.music_bot = inter.bot
-            inter.music_guild = inter.guild
-            return True
+            return update_attr(inter, inter.bot, inter.guild)
 
         raise NoPlayer()
 
@@ -321,12 +336,13 @@ async def check_pool_bots(inter, only_voiced: bool = False, check_player: bool =
                 ", ".join(b.user.mention for b in bot_missing_perms)
         else:
             msg = "**All bots are currently in use...**\n\n**You can connect to one of the channels below where active sessions are taking place:**\n" + ", ".join(voice_channels)
+
         if extra_bots_counter:
             if inter.author.guild_permissions.manage_guild:
-                msg += "\n\n**Alternatively, if you prefer: Add more music bots to the current server by clicking the button below:**"
+                msg += "\n\n**Alternatively, if you prefer, you can add more music bots to the current server by clicking the button below:**"
             else:
-                msg += "\n\n**Alternatively, if you prefer: Ask an administrator/manager of the server to click the button below " \
-                    "to add more music bots to the current server.**"
+                msg += "\n\n**Or, if you prefer, you can ask a server administrator/manager to click the button below " \
+                        "to add more music bots to the current server.**"
             components = [disnake.ui.Button(custom_id="bot_invite", label="Add more music bots by clicking here")]
 
     inter.bot.dispatch("pool_dispatch", inter, None)
@@ -335,7 +351,7 @@ async def check_pool_bots(inter, only_voiced: bool = False, check_player: bool =
 
     raise PoolException()
 
-def has_player():
+def has_player(check_node = True):
 
     async def predicate(inter):
 
@@ -345,9 +361,12 @@ def has_player():
             bot = inter.bot
 
         try:
-            bot.music.players[inter.guild_id]
+            player = bot.music.players[inter.guild_id]
         except KeyError:
             raise NoPlayer()
+
+        if check_node and not player.node.is_available:
+            raise wavelink.ZeroConnectedNodes()
 
         return True
 
@@ -528,6 +547,9 @@ def check_stage_topic():
         except KeyError:
             raise NoPlayer()
 
+        if not player.guild.me.voice:
+            raise NoPlayer()
+
         time_limit = 30 if isinstance(player.guild.me.voice.channel, disnake.VoiceChannel) else 120
 
         if player.stage_title_event and (time_:=int((disnake.utils.utcnow() - player.start_time).total_seconds())) < time_limit and not (await bot.is_owner(inter.author)):
@@ -535,6 +557,29 @@ def check_stage_topic():
                 f"**You'll have to wait {time_format((time_limit - time_) * 1000, use_names=True)} to use this function "
                 f"with the active stage automatic announcement...**"
             )
+
+        return True
+
+    return commands.check(predicate)
+
+def check_yt_cooldown():
+
+    async def predicate(inter):
+
+        try:
+            bot = inter.music_bot
+        except AttributeError:
+            bot = inter.bot
+
+        try:
+            player: LavalinkPlayer = bot.music.players[inter.guild_id]
+        except KeyError:
+            return True
+
+        if player.current and player.current.info["sourceName"] == "youtube" and (remaining:=(disnake.utils.utcnow() - player.start_time).total_seconds()) < bot.config["YOUTUBE_TRACK_COOLDOWN"]:
+            if not await bot.is_owner(inter.author):
+                raise GenericError("**{}, you can only skip the current YouTube song in {}**.\n"
+                                   "-# This is a way to help avoid potential YouTube blocks on music playback".format(inter.author.mention, time_format((bot.config["YOUTUBE_TRACK_COOLDOWN"] - int(remaining))*1000, use_names=True)))
 
         return True
 
@@ -548,6 +593,56 @@ def user_cooldown(rate: int, per: int):
         return commands.Cooldown(rate, per)
 
     return custom_cooldown
+
+def get_available_bots_info(pool: BotPool, guild_id: int, member: disnake.Member):
+
+    extra_bot_counter = 0
+
+    available_bots = set()
+
+    voice_channels = set()
+
+    for b in pool.get_guild_bots(guild_id):
+
+        if not b.bot_ready:
+            continue
+
+        try:
+            p = b.music.players[guild_id]
+        except KeyError:
+            if not b.get_guild(guild_id):
+                extra_bot_counter += 1
+                continue
+            available_bots.add(b.user.mention)
+        else:
+            if p.keep_connected or p.restrict_mode or not p.last_channel or not p.last_channel.permissions_for(member).connect:
+                continue
+            voice_channels.add(p.last_channel.mention)
+
+    txts = []
+
+    components = []
+
+    if available_bots:
+        txts.append(f"You can use another{(s:='s'[:(abcount:=len(available_bots))^1])} available music bot{s} on the server to use in another voice channel: " + " ".join(available_bots))
+    else:
+        t = ""
+        if voice_channels:
+            t += f"You can join one of the channels with active sessions on the server: " + " ".join(voice_channels)
+        if extra_bot_counter:
+            t += "\n\n" + ("Or if you prefer, you can" if t else "You can")
+            if not member.guild_permissions.manage_guild:
+                t += "ask a server administrator "
+            t += "to add more music bots by clicking the button below."
+
+            components = [disnake.ui.Button(custom_id="bot_invite", label="Add more music bots by clicking here")]
+
+        if t:
+            txts.append(t)
+
+    return "\n\n".join(txts), components
+
+
 
 
 #######################################################################
@@ -569,12 +664,18 @@ async def check_player_perm(inter, bot: BotCore, channel, guild_data: dict = Non
     except AttributeError:
         vc = player.last_channel
 
+    if not isinstance(inter.guild, disnake.Guild):
+        inter.author = player.guild.get_member(inter.author.id)
+
     if inter.author.guild_permissions.manage_channels:
         return True
 
-    if player.keep_connected and not (await bot.is_owner(inter.author)):
+    if player.keep_connected:
+
+        txt, components = get_available_bots_info(bot.pool, player.guild_id, inter.author)
+
         raise GenericError("Only members with the permission to **manage channels** "
-                           "can use this command/button with the **24/7 mode** active...")
+                           f"can use this command/button with the **24/7 mode active** in the channel <#{player.channel_id}>...\n\n" + txt, components=components)
 
     if inter.author.id == player.player_creator or inter.author.id in player.dj:
         return True
@@ -594,8 +695,11 @@ async def check_player_perm(inter, bot: BotCore, channel, guild_data: dict = Non
         return True
 
     if player.restrict_mode:
-        raise GenericError("Only DJ's or members with the **move members** permission "
-                           "can use this command/button with **restricted mode** active...")
+
+        txt, components = get_available_bots_info(bot.pool, player.guild_id, inter.author)
+
+        raise GenericError("Only DJs or members with the **move members** permission "
+                           "can use this command/button with **restricted mode active**...\n\n" + txt, components=components)
 
     if not vc and inter.author.voice:
         player.dj.add(inter.author.id)

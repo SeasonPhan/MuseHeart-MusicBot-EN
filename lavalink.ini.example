@@ -6,12 +6,13 @@ host=lava.link
 port=80
 password=youshallnotpass
 secure=false
-# The two items below are optional (you can choose not to include the lines below)
+# The 6 items below are optional (you can simply choose not to include the lines below)
 region=us_central
 website=https://support.something.host/en/article/lavalink-hosting-okm26z/
 search=true
-retry_403=false
 search_providers=ytsearch scsearch
+prefer_youtube_native_playback=true
+only_use_native_search_providers=true
 
 #######################
 

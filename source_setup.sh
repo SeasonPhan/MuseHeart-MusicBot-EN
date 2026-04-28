@@ -36,8 +36,6 @@ python -m pip install -U pip
 
 pip install -r ./requirements.txt 2>&1 | tee "./.logs/setup.log"
 
-pip install setuptools>=70.0.0
-
 if [ ! -f ".env" ] && [ ! -f "config.json" ]; then
   cp .example.env .env
   echo "Don't forget to add the necessary tokens to the .env file"

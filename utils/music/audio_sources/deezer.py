@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import re
+from typing import Optional
+from urllib.parse import quote
 
 from aiohttp import ClientSession
+from cachetools import TTLCache
+from rapidfuzz import fuzz
 
 from utils.music.converters import fix_characters, URL_REG
 from utils.music.errors import GenericError
-from utils.music.models import PartialTrack, PartialPlaylist
-
+from utils.music.models import LavalinkTrack, LavalinkPlaylist
+from utils.music.track_encoder import encode_track
 
 deezer_regex = re.compile(r"(https?://)?(www\.)?deezer\.com/(?P<countrycode>[a-zA-Z]{2}/)?(?P<type>track|album|playlist|artist|profile)/(?P<identifier>[0-9]+)")
 
@@ -16,6 +20,9 @@ deezer_regex = re.compile(r"(https?://)?(www\.)?deezer\.com/(?P<countrycode>[a-z
 class DeezerClient:
 
     base_url = "https://api.deezer.com"
+    
+    def __init__(self, cache: Optional[TTLCache] = None):
+        self.cache = cache or TTLCache(maxsize=700, ttl=86400)
 
     async def request(self, path: str, params: dict = None):
 
@@ -48,13 +55,13 @@ class DeezerClient:
         return (await self.request(path=f"artist/{artist_id}/radio"))['data']
 
     async def track_search(self, query):
-        return await self.request(path="search", params={'q': query})
+        return await self.request(path="search", params={'q': quote(query)})
 
-    async def get_tracks(self, requester: int, url: str):
+    async def get_tracks(self, requester: int, url: str, search: bool = True, check_title: float = None):
 
         if not (matches := deezer_regex.match(url)):
 
-            if URL_REG.match(url):
+            if URL_REG.match(url) or not search:
                 return
 
             r = await self.track_search(query=url)
@@ -67,21 +74,29 @@ class DeezerClient:
                 tracks = []
 
                 for result in tracks_result:
-                    t = PartialTrack(
-                        uri=result['link'],
-                        author=result['artist']['name'],
-                        title=result['title'],
-                        thumb=result['album']['cover_big'],
-                        duration=result['duration'] * 1000,
-                        source_name="deezer",
-                        identifier=result['id'],
-                        requester=requester
-                    )
 
-                    t.info["isrc"] = result.get('isrc')
+                    trackinfo = {
+                        'title': result['title'],
+                        'author': result['artist']['name'],
+                        'length': int(result['duration'] * 1000),
+                        'identifier': str(result['id']),
+                        'isStream': False,
+                        'uri': result['link'],
+                        'sourceName': 'deezer',
+                        'position': 0,
+                        'artworkUrl': result['album']['cover_big'],
+                        'isrc': result.get('isrc'),
+                    }
+
+                    t = LavalinkTrack(id_=encode_track(trackinfo)[1], info=trackinfo, requester=requester)
+
                     artists = result.get('contributors') or [result['artist']]
 
                     t.info["extra"]["authors"] = [a['name'] for a in artists]
+
+                    if check_title and fuzz.token_sort_ratio(url.lower(), f"{t.authors_string} - {t.single_title}".lower()) < check_title:
+                        continue
+
                     t.info["extra"]["authors_md"] = ", ".join(
                         f"[`{fix_characters(a['name'])}`](https://www.deezer.com/artist/{a['id']})" for a in
                         artists)
@@ -110,18 +125,21 @@ class DeezerClient:
 
             result = await self.get_track_info(url_id)
 
-            t = PartialTrack(
-                uri=result['link'],
-                author=result['artist']['name'],
-                title=result['title'],
-                thumb=result['album']['cover_big'],
-                duration=result['duration'] * 1000,
-                source_name="deezer",
-                identifier=result['id'],
-                requester=requester
-            )
+            trackinfo = {
+                'title': result['title'],
+                'author': result['artist']['name'],
+                'length': int(result['duration'] * 1000),
+                'identifier': str(result['id']),
+                'isStream': False,
+                'uri': result['link'],
+                'sourceName': 'deezer',
+                'position': 0,
+                'artworkUrl': result['album']['cover_big'],
+                'isrc': result.get('isrc'),
+            }
 
-            t.info["isrc"] = result.get('isrc')
+            t = LavalinkTrack(id_=encode_track(trackinfo)[1], info=trackinfo, requester=requester)
+
             artists = result.get('contributors') or [result['artist']]
 
             t.info["extra"]["authors"] = [a['name'] for a in artists]
@@ -146,7 +164,11 @@ class DeezerClient:
 
         if url_type == "album":
 
-            result = await self.get_album_info(url_id)
+            cache_key = f"partial:deezer:{url_type}:{url_id}"
+
+            if not (result:=self.cache.get(cache_key)):
+                result = await self.get_album_info(url_id)
+                self.cache[cache_key] = result
 
             if len(result['tracks']['data']) > 1:
                 data["playlistInfo"].update(
@@ -161,18 +183,20 @@ class DeezerClient:
             else:
                 result_track = result['tracks']['data'][0]
 
-                t = PartialTrack(
-                    uri=result_track['link'],
-                    author=result_track['artist']['name'],
-                    title=result_track['title'],
-                    thumb=result_track['album']['cover_big'],
-                    duration=result_track['duration'] * 1000,
-                    source_name="deezer",
-                    identifier=result_track['id'],
-                    requester=requester
-                )
+                trackinfo = {
+                    'title': result['title'],
+                    'author': result['artist']['name'],
+                    'length': int(result['duration'] * 1000),
+                    'identifier': str(result['id']),
+                    'isStream': False,
+                    'uri': result['link'],
+                    'sourceName': 'deezer',
+                    'position': 0,
+                    'artworkUrl': result['album']['cover_big'],
+                    'isrc': result.get('isrc'),
+                }
 
-                t.info["isrc"] = result_track.get('isrc')
+                t = LavalinkTrack(id_=encode_track(trackinfo)[1], info=trackinfo, requester=requester)
 
                 artists = result_track.get('contributors') or [result_track['artist']]
 
@@ -190,7 +214,11 @@ class DeezerClient:
 
         elif url_type == "artist":
 
-            result = await self.get_artist_top(url_id)
+            cache_key = f"partial:deezer:{url_type}:{url_id}"
+
+            if not (result:=self.cache.get(cache_key)):
+                result = await self.get_artist_top(url_id)
+                self.cache[cache_key] = result
 
             url_id = int(url_id)
 
@@ -214,7 +242,13 @@ class DeezerClient:
             tracks_data = result['data']
 
         elif url_type == "playlist":
-            result = await self.get_playlist_info(url_id)
+
+            cache_key = f"partial:deezer:{url_type}:{url_id}"
+
+            if not (result := self.cache.get(cache_key)):
+                result = await self.get_playlist_info(url_id)
+                self.cache[cache_key] = result
+
             data["playlistInfo"]["name"] = result["title"]
             data["playlistInfo"]["thumb"] = result["picture_big"]
             tracks_data = result["tracks"]["data"]
@@ -228,25 +262,27 @@ class DeezerClient:
         data["playlistInfo"]["selectedTrack"] = -1
         data["playlistInfo"]["type"] = url_type
 
-        playlist = PartialPlaylist(data, url=url)
+        playlist = LavalinkPlaylist(data, url=url)
 
         playlist_info = playlist if url_type != "album" else None
 
         for t in tracks_data:
 
-            track = PartialTrack(
-                uri=t['link'],
-                author=t['artist']['name'],
-                title=t['title'],
-                thumb=t['album']['cover_big'],
-                duration=t['duration'] * 1000,
-                source_name="deezer",
-                identifier=t['id'],
-                playlist=playlist_info,
-                requester=requester
-            )
+            trackinfo = {
+                'title': result['title'],
+                'author': result['artist']['name'],
+                'length': int(result['duration'] * 1000),
+                'identifier': str(result['id']),
+                'isStream': False,
+                'uri': result['link'],
+                'sourceName': 'deezer',
+                'position': 0,
+                'artworkUrl': result['album']['cover_big'],
+                'isrc': result.get('isrc'),
+            }
 
-            track.info["isrc"] = t.get('isrc')
+            track = LavalinkTrack(id_=encode_track(trackinfo)[1], info=trackinfo, requester=requester, playlist=playlist_info)
+
             artists = t.get('contributors') or [t['artist']]
 
             track.info["extra"]["authors"] = [a['name'] for a in artists]

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# nota: este sistema é totalmente experimental.
+# note: this system is totally experimental.
 import asyncio
 import os
 import pickle
@@ -8,6 +8,7 @@ import shutil
 import traceback
 import zlib
 from base64 import b64decode, b64encode
+from contextlib import suppress
 from typing import Union
 
 import aiofiles
@@ -17,6 +18,7 @@ from disnake.ext import commands
 from utils.client import BotCore
 from utils.db import DBModel
 from utils.music.checks import can_connect, can_send_message
+from utils.music.errors import PoolException
 from utils.music.filters import AudioFilter
 from utils.music.models import LavalinkPlayer
 from utils.others import send_idle_embed, CustomContext
@@ -180,7 +182,8 @@ class PlayerSession(commands.Cog):
             "prefix_info": player.prefix_info,
             "voice_state": player._voice_state,
             "time": disnake.utils.utcnow(),
-            "lastfm_artists": player.lastfm_artists
+            "lastfm_artists": player.lastfm_artists,
+            "start_timestamp": player.start_timestamp,
         }
 
         try:
@@ -188,6 +191,15 @@ class PlayerSession(commands.Cog):
         except AttributeError:
             player._last_channel_id = vc_id
             data["last_voice_channel_id"] = vc_id
+
+        with suppress(AttributeError):
+            data["extra_info"] = player.extra_info
+        with suppress(AttributeError):
+            data["live_lyrics_status"] = player.live_lyrics_enabled
+        with suppress(AttributeError):
+            data["current_encoded"] = player.current_encoded
+        with suppress(AttributeError):
+            data["command_log_list"] = player.command_log_list
 
         if player.static:
             if player.skin_static.startswith("> custom_skin: "):
@@ -296,7 +308,7 @@ class PlayerSession(commands.Cog):
         await self.voice_check(voice_channel, position)
 
         try:
-            track_id = player.current.id
+            track_id = player.current_encoded or player.current.id
         except:
             track_id = None
 
@@ -341,6 +353,9 @@ class PlayerSession(commands.Cog):
 
         if isinstance(voice_channel, disnake.StageChannel) and \
                 voice_channel.permissions_for(guild.me).mute_members:
+
+            while not guild.me.voice:
+                await asyncio.sleep(1)
 
             await asyncio.sleep(3)
 
@@ -410,17 +425,41 @@ class PlayerSession(commands.Cog):
                     data["message_id"] = None
 
                 if text_channel:
-                    try:
-                        can_send_message(text_channel, self.bot.user)
-                    except Exception:
-                        print(f"{self.bot.user} - Controller Ignored (lack of permission) [Channel: {text_channel.name} | ID: {text_channel.id}] - [ {guild.name} - {guild.id} ]")
-                        text_channel = None
-                    else:
-                        if data["message_id"]:
-                            try:
-                                message = await text_channel.fetch_message(data["message_id"])
-                            except (disnake.NotFound, disnake.Forbidden):
-                                pass
+
+                    if isinstance(text_channel, disnake.Thread):
+
+                        if not text_channel.parent.permissions_for(
+                                guild.me).send_messages_in_threads or not text_channel.permissions_for(
+                            guild.me).read_messages:
+                            text_channel = None
+
+                        elif text_channel.locked:
+
+                            if not text_channel.parent.permissions_for(guild.me).manage_threads:
+                                text_channel = None
+                                message = None
+                            else:
+                                await text_channel.edit(archived=False, locked=False)
+
+                        elif text_channel.archived:
+
+                            if text_channel.owner_id == self.bot.user.id:
+                                await text_channel.edit(archived=False)
+                            else:
+                                await text_channel.send("Unarchiving the thread.", delete_after=2)
+
+                    if text_channel:
+                        try:
+                            can_send_message(text_channel, self.bot.user)
+                        except Exception:
+                            print(f"{self.bot.user} - Controller Ignored (lack of permission) [Channel: {text_channel.name} | ID: {text_channel.id}] - [ {guild.name} - {guild.id} ]")
+                            text_channel = None
+                        else:
+                            if data["message_id"]:
+                                try:
+                                    message = await text_channel.fetch_message(data["message_id"])
+                                except (disnake.NotFound, disnake.Forbidden):
+                                    pass
 
                 message_without_thread = None
 
@@ -448,8 +487,8 @@ class PlayerSession(commands.Cog):
                               f"channel_id: {text_channel.id} | message_id {data['message']}")
 
                 if not voice_channel or not voice_channel.permissions_for(guild.me).connect:
-                    if data["voice_channel"] != (vc:=data.get("last_voice_channel_id", data["voice_channel"])):
-                        voice_channel=vc
+                    if data["voice_channel"] != (vc_id:=data.get("last_voice_channel_id", data["voice_channel"])):
+                        voice_channel=self.bot.get_channel(int(vc_id))
                         try:
                             del data["voice_state"]
                         except:
@@ -488,6 +527,8 @@ class PlayerSession(commands.Cog):
                             await send_idle_embed(text_channel, bot=self.bot, text=msg)
                     except Exception:
                         traceback.print_exc()
+                    if isinstance(e, PoolException):
+                        await self.delete_data(guild.id)
                     return
 
                 while True:
@@ -532,21 +573,18 @@ class PlayerSession(commands.Cog):
                         await self.delete_data(guild.id)
                     return
 
-                try:
-                    player._voice_state = data["voice_state"]
-                except KeyError:
-                    pass
-
-                try:
-                    player.mini_queue_enabled = data["mini_queue_enabled"]
-                except:
-                    pass
-
+                player.extra_info = data.get("extra_info", {})
+                player._voice_state = data.get("voice_state")
+                player.current_encoded = data.get("current_encoded")
+                player.live_lyrics_enabled = data.get("live_lyrics_status", False)
+                player.mini_queue_enabled = data.get("mini_queue_enabled")
                 player.lastfm_artists = data.get("lastfm_artists")
-
                 player.stage_title_event = data.get("stage_title_event", False)
-
                 player.listen_along_invite = data.pop("listen_along_invite", "")
+                player.command_log_list.extend(data.pop("command_log_list", []))
+
+                if start_timestamp:=data.get("start_timestamp"):
+                    player.start_timestamp = start_timestamp
 
                 player.dj = set(data["dj"])
                 player.loop = data["loop"]
@@ -585,6 +623,13 @@ class PlayerSession(commands.Cog):
             failed_tracks, playlists = self.bot.pool.process_track_cls(data.get("failed_tracks", []), playlists)
 
             player.queue.extend(failed_tracks)
+
+            if player.controller_mode is False:
+                try:
+                    await player.message.delete()
+                    player.message = None
+                except:
+                    pass
 
             if started:
                 player.set_command_log(
@@ -632,6 +677,8 @@ class PlayerSession(commands.Cog):
                         await player.process_next(start_position=start_position)
                         if pause:
                             await player.set_pause(True)
+                            if not check:
+                                player.start_members_timeout(check=False)
 
                     player._session_resuming = False
                 except Exception:

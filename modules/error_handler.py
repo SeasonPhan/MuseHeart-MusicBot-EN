@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import traceback
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Union
 
 import disnake
 from aiohttp import ClientSession
@@ -11,7 +11,7 @@ from disnake.ext import commands
 
 from utils.music.converters import URL_REG
 from utils.music.errors import parse_error, PoolException
-from utils.others import send_message, CustomContext, string_to_file, paginator
+from utils.others import send_message, CustomContext, string_to_file, paginator, check_cmd
 
 if TYPE_CHECKING:
     from utils.client import BotCore
@@ -44,7 +44,7 @@ class ErrorHandler(commands.Cog):
 
 
     @commands.Cog.listener('on_interaction_player_error')
-    async def on_inter_player_error(self, inter: disnake.AppCmdInter, error: Exception):
+    async def on_inter_player_error(self, inter: disnake.ApplicationCommandInteraction, error: Exception):
 
         if not isinstance(error, commands.MaxConcurrencyReached):
             try:
@@ -57,7 +57,7 @@ class ErrorHandler(commands.Cog):
     """@commands.Cog.listener('on_user_command_completion')
     @commands.Cog.listener('on_message_command_completion')
     @commands.Cog.listener('on_slash_command_completion')
-    async def interaction_command_completion(self, inter: disnake.AppCmdInter):
+    async def interaction_command_completion(self, inter: disnake.ApplicationCommandInteraction):
 
         try:
             await inter.application_command._max_concurrency.release(inter)
@@ -73,26 +73,34 @@ class ErrorHandler(commands.Cog):
         except:
             pass"""
 
+    @commands.Cog.listener('on_custom_error')
+    async def custom_error_event(self, ctx: Union[disnake.ApplicationCommandInteraction, CustomContext], error: Exception):
+        if isinstance(ctx, (CustomContext, disnake.Message)):
+            await self.on_legacy_command_error(ctx=ctx, error=error, resp_msg=False)
+        else:
+            await self.process_interaction_error(inter=ctx, error=error, resp_msg=False)
+
+    @commands.Cog.listener('on_custom_slash_command_error')
     @commands.Cog.listener('on_user_command_error')
     @commands.Cog.listener('on_message_command_error')
     @commands.Cog.listener('on_slash_command_error')
-    async def on_interaction_command_error(self, inter: disnake.AppCmdInter, error: Exception):
+    async def on_interaction_command_error(self, inter: disnake.ApplicationCommandInteraction, error: Exception, **kwargs):
 
-        await self.process_interaction_error(inter=inter, error=error)
+        await self.process_interaction_error(inter=inter, error=error, **kwargs)
 
-    async def process_interaction_error(self, inter: disnake.AppCmdInter, error: Exception):
+    async def process_interaction_error(self, inter: disnake.ApplicationCommandInteraction, error: Exception, resp_msg = True, **kwargs):
 
         if isinstance(error, PoolException):
             return
 
-        error_msg, full_error_msg, kill_process, components, mention_author = parse_error(inter, error)
+        error_msg, full_error_msg, kill_process, components, mention_author = parse_error(inter, error, **kwargs)
 
         if isinstance(error, disnake.NotFound) and str(error).endswith("Unknown Interaction"):
             return
 
         kwargs = {"text": ""}
-        send_webhook = False
         color = disnake.Color.red()
+        send_webhook = False
 
         try:
             if inter.message.author.bot or mention_author:
@@ -121,17 +129,20 @@ class ErrorHandler(commands.Cog):
             for p in paginator(error_msg):
                 kwargs["embeds"].append(disnake.Embed(color=color, description=p))
 
-        try:
-            await send_message(inter, components=components, **kwargs)
-        except:
-            print(("-"*50) + f"\n{error_msg}\n" + ("-"*50))
-            traceback.print_exc()
+        if resp_msg:
+            try:
+                await send_message(inter, components=components, **kwargs)
+            except:
+                print(("-"*50) + f"\n{error_msg}\n" + ("-"*50))
+                traceback.print_exc()
+        else:
+            send_webhook = True
 
         if kill_process:
             await asyncio.create_subprocess_shell("kill 1")
             return
 
-        if not send_webhook:
+        if not send_webhook or not full_error_msg:
             return
 
         try:
@@ -150,6 +161,12 @@ class ErrorHandler(commands.Cog):
             traceback.print_exc()
 
     async def do_playcmd(self, ctx: CustomContext):
+
+        if not self.bot.pool.config["ENABLE_SONGREQUEST_MENTION"]:
+            # testing
+            ctx.bot.dispatch("custom_message", ctx.message)
+            return
+
         query = str(ctx.message.content)
 
         for m in ctx.message.mentions:
@@ -162,10 +179,11 @@ class ErrorHandler(commands.Cog):
             play_cmd = self.bot.get_slash_command("play")
 
             try:
+                await check_cmd(play_cmd, ctx)
                 await play_cmd.callback(
                     inter=ctx, query=query,
                     self=play_cmd.cog, position=0, options=False, force_play="no",
-                    manual_selection=False, repeat_amount=0, server=None
+                    manual_selection=False, server=None
                 )
             except commands.CommandNotFound:
                 return
@@ -173,7 +191,7 @@ class ErrorHandler(commands.Cog):
                 await self.on_legacy_command_error(ctx, e)
 
     @commands.Cog.listener("on_command_error")
-    async def on_legacy_command_error(self, ctx: CustomContext, error: Exception):
+    async def on_legacy_command_error(self, ctx: CustomContext, error: Exception, resp_msg=True):
 
         """if not isinstance(error, commands.MaxConcurrencyReached):
             try:
@@ -193,7 +211,12 @@ class ErrorHandler(commands.Cog):
             print(f"{ctx.author} [{ctx.author.id}] is not the bot owner to use the command: {ctx.command.name}")
             return
 
-        if isinstance(error, commands.MissingPermissions) and (await ctx.bot.is_owner(ctx.author)):
+        try:
+            bot = ctx.bot
+        except AttributeError:
+            bot = self.bot
+
+        if isinstance(error, commands.MissingPermissions) and (await bot.is_owner(ctx.author)):
             try:
                 await ctx.reinvoke()
             except Exception as e:
@@ -258,25 +281,30 @@ class ErrorHandler(commands.Cog):
         except:
             pass
 
-        if hasattr(ctx, "inter"):
-            if ctx.inter.response.is_done():
-                func = ctx.inter.edit_original_message
-            else:
-                func = ctx.inter.response.edit_message
-            kwargs.pop("delete_after", None)
-        else:
-            try:
-                func = ctx.store_message.edit
-            except:
-                func = ctx.send
+        if resp_msg:
 
-        await func(components=components, **kwargs)
+            if hasattr(ctx, "inter"):
+                if ctx.inter.response.is_done():
+                    func = ctx.inter.edit_original_message
+                else:
+                    func = ctx.inter.response.edit_message
+                kwargs.pop("delete_after", None)
+            else:
+                try:
+                    func = ctx.store_message.edit
+                except:
+                    func = ctx.send
+
+            await func(components=components, **kwargs)
+
+        else:
+            send_webhook = True
 
         if kill_process:
             await asyncio.create_subprocess_shell("kill 1")
             return
 
-        if not send_webhook:
+        if not send_webhook or not full_error_msg:
             return
 
         try:
@@ -392,8 +420,13 @@ class ErrorHandler(commands.Cog):
             timestamp=disnake.utils.utcnow()
         )
 
+        try:
+            bot = ctx.bot
+        except AttributeError:
+            bot = self.bot
+
         if ctx.guild:
-            embed.colour = ctx.bot.get_color(ctx.guild.me)
+            embed.colour = bot.get_color(ctx.guild.me)
             embed.add_field(
                 name="Server:", inline=False,
                 value=f"```\n{disnake.utils.escape_markdown(ctx.guild.name)}\nID: {ctx.guild.id}```"
@@ -425,9 +458,13 @@ class ErrorHandler(commands.Cog):
 
         else:
             embed.colour = self.bot.get_color()
+            try:
+                guild_id = ctx.guild_id
+            except AttributeError:
+                guild_id = ctx.guild.id
             embed.add_field(
                 name="Server [ID]:", inline=False,
-                value=f"```\n{ctx.guild_id}```"
+                value=f"```\n{guild_id}```"
             )
 
         embed.set_footer(
@@ -446,8 +483,16 @@ class ErrorHandler(commands.Cog):
 
         except AttributeError:
             if self.bot.intents.message_content and not ctx.author.bot:
-                embed.description = f"**Command:**```\n" \
-                                    f"{ctx.message.content}" \
+
+                try:
+                    message = ctx.message
+                    type_ ="Command"
+                except AttributeError:
+                    message = ctx
+                    type_ = "Message"
+
+                embed.description = f"**{type_}:**```\n" \
+                                    f"{message.content}" \
                                     f"```"
 
         return embed
@@ -458,6 +503,9 @@ class ErrorHandler(commands.Cog):
             embed: Optional[disnake.Embed] = None,
             file: Optional[disnake.File] = None
     ):
+
+        if not self.bot.config["AUTO_ERROR_REPORT_WEBHOOK"]:
+            return
 
         kwargs = {
             "username": self.bot.user.name,
@@ -476,7 +524,6 @@ class ErrorHandler(commands.Cog):
         async with ClientSession() as session:
             webhook = disnake.Webhook.from_url(self.bot.config["AUTO_ERROR_REPORT_WEBHOOK"], session=session)
             await webhook.send(**kwargs)
-
 
 def setup(bot: BotCore):
     bot.add_cog(ErrorHandler(bot))

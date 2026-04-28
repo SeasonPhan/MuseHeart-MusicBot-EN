@@ -79,7 +79,7 @@ class IndexHandler(tornado.web.RequestHandler):
         for identifier, exception in self.pool.failed_bots.items():
             failed_bots.append(f"<tr><td>{identifier}</td><td>{exception}</td></tr>")
 
-        for bot in sorted(self.pool.bots, key=lambda b: b.identifier):
+        for bot in sorted(self.pool.bots, key=lambda b: len(b.guilds)):
 
             if bot.is_ready():
                 avatar = bot.user.display_avatar.replace(size=256, static_format="png").url
@@ -291,6 +291,12 @@ class WSClient:
         self.connect_task = []
 
     async def connect(self):
+
+        for t in self.connect_task:
+            try:
+                t.cancel()
+            except:
+                continue
 
         if not self.session:
             self.session = aiohttp.ClientSession()
