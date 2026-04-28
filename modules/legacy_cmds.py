@@ -215,7 +215,7 @@ class Owner(commands.Cog):
             return txt
 
     @commands.is_owner()
-    @panel_command(aliases=["rds", "reloadskins"], description="Reload skins.", emoji="🎨")
+    @panel_command(aliases=["rds"], description="Reload skins.", emoji="🎨")
     async def reloadskins(self, ctx: Union[CustomContext, disnake.MessageInteraction]):
 
         for m in list(sys.modules):
@@ -237,7 +237,7 @@ class Owner(commands.Cog):
             return txt
 
     @commands.is_owner()
-    @panel_command(aliases=["rd", "reload"], description="Reload modules.", emoji="🔄",
+    @panel_command(aliases=["rd"], description="Reload modules.", emoji="🔄",
                    alt_name="Load/Reload modules.")
     async def reload(self, ctx: Union[CustomContext, disnake.MessageInteraction], *modules):
 
