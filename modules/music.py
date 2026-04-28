@@ -5683,7 +5683,7 @@ class Music(commands.Cog):
 
                 modal_components = [
                    disnake.ui.Label(
-                       text="Name or link from youtube/spotify/soundcloud...",
+                       text="Name/Link from youtube/spotify/soundcloud...",
                        component=disnake.ui.TextInput(
                            custom_id="song_input", max_length=150, required=not modal_components
                        )
