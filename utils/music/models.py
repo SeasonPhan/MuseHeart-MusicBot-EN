@@ -176,7 +176,7 @@ class PartialTrack:
 
     @property
     def source_name(self):
-        return self.info["sourceName"] or "unkown"
+        return self.info["sourceName"] or "unknown"
 
     @property
     def single_title(self) -> str:
@@ -184,7 +184,7 @@ class PartialTrack:
 
     @property
     def author(self) -> str:
-        return self.info["author"] or "Artista Desconhecido"
+        return self.info["author"] or "Unknown Artist"
 
     @property
     def authors_string(self) -> str:
@@ -405,7 +405,7 @@ class LavalinkTrack(wavelink.Track):
 
     @property
     def source_name(self):
-        return self.info["sourceName"] or "unkown"
+        return self.info["sourceName"] or "unknown"
 
     @property
     def name(self) -> str:
@@ -600,7 +600,7 @@ class LavalinkPlayer(wavelink.Player):
             "the song currently playing. Try using the /set_voice_status command or "
             f"{self.prefix_info}stageannounce (Only members with server management permission can use this feature).",
 
-            f"If the music is lagging, audio freezing, etc. Try changing the voice channel region "
+            f"If the music is lagging, the audio is freezing, etc., try changing the voice channel region "
             f"(if you are on a stage, use the {self.prefix_info}stageregion command)."
         ]
 
@@ -794,7 +794,7 @@ class LavalinkPlayer(wavelink.Player):
                 try:
                     can_connect(vc, self.guild, bot=self.bot)
                 except (GenericError, PoolException) as e:
-                    self.set_command_log(f"Ocorreu uma falha ao reconectar o player no canal de voz: {e}.", controller=True)
+                    self.set_command_log(f"Failed to reconnect the player to the voice channel: {e}.", controller=True)
                     self.update = True
                 except Exception as e:
                     self.set_command_log(f"A failure occurred while reconnecting the player to the voice channel: {repr(e)}.", controller=True)
@@ -1130,7 +1130,7 @@ class LavalinkPlayer(wavelink.Player):
                             continue
 
                         if not getattr(self, "yt_warn", None):
-                            txt = f"Due to YouTube restrictions on the server `{self.node.identifier}`. During the current session, " \
+                            txt = f"Due to YouTube restrictions on the server `{self.node.identifier}`, during the current session " \
                                   "an attempt will be made to find the same song on other music platforms using the name " \
                                   "of the YouTube songs in the queue (the played song may differ from what was expected " \
                                   "or even be skipped if no results are found)."
@@ -1312,8 +1312,8 @@ class LavalinkPlayer(wavelink.Player):
             if bots_in_guild:
                 hints.append(
                     "If any member wants to use me in another voice channel without having to wait for me "
-                    f"to be disconnected or interrupted from the current channel, there are {bots_in_guild} more bot{'s'[:bots_in_guild^1]} on the server "
-                    "that works with the same system/commands (using the same prefix/slash commands). "
+                    f"to be disconnected or interrupted from the current channel, the server has {bots_in_guild} more bot{'s'[:bots_in_guild^1]} "
+                    "running the same system/commands (using the same prefix/slash commands). "
                     f"Try joining a different voice channel than my current one and use the command "
                     f"{self.prefix_info}play or /play."
                 )
@@ -1321,14 +1321,14 @@ class LavalinkPlayer(wavelink.Player):
             elif bots_outside_guild:
                 hints.append(
                     "If any member wants to use me in another voice channel without needing to wait for me to "
-                    f"be disconnected or interrupted from the current channel. It's possible to add {bots_outside_guild} extra bot{'s'[:bots_outside_guild^1]} "
-                    f"to the current server that work(s) with the same system/commands as mine (using the same "
+                    f"be disconnected or interrupted from the current channel, it's possible to add {bots_outside_guild} extra bot{'s'[:bots_outside_guild^1]} "
+                    f"to the current server, running the same system/commands as mine (using the same "
                     f"prefix/slash commands). Use the command {self.prefix_info}invite or /invite to add them."
                 )
 
         if self.controller_mode:
             hints.append(
-                "By clicking on this emoji 🎛️ in the messages of some commands, you will be redirected to the player-controller.."
+                "By clicking on this emoji 🎛️ in the messages of some commands, you will be redirected to the player-controller."
             )
 
         random.shuffle(hints)
@@ -2156,7 +2156,7 @@ class LavalinkPlayer(wavelink.Player):
 
             cog = self.bot.get_cog("ErrorHandler")
             if cog:
-                embed.add_field(name="Servidor:", value=f"{self.guild.name} [{self.guild.id}]")
+                embed.add_field(name="Server:", value=f"{self.guild.name} [{self.guild.id}]")
                 try:
                     await cog.send_webhook(
                         embed=embed,
@@ -2257,7 +2257,7 @@ class LavalinkPlayer(wavelink.Player):
                     disnake.SelectOption(
                         label="Enable autoplay", emoji="🔄",
                         value=PlayerControls.autoplay,
-                        description=f"Play related song to: {play_txt[:19]}"
+                        description=f"Play songs related to: {play_txt[:19]}"
                     ),
                 ]
             )
@@ -2450,7 +2450,7 @@ class LavalinkPlayer(wavelink.Player):
                     msg = msg[:107] + "..."
 
             if not msg:
-                msg = "Status: Waiting for new song."
+                msg = "Status: Waiting for new songs."
             else:
                 emojis = emoji_pattern.findall(msg)
                 for emoji in emojis:
@@ -2689,7 +2689,7 @@ class LavalinkPlayer(wavelink.Player):
                                 label=("Disable" if self.restrict_mode else "Enable") + " restricted mode",
                                 emoji="🔐",
                                 value=PlayerControls.restrict_mode,
-                                description="Only DJ/Staff can use restricted commands."
+                                description="Only DJs/Staff can use restricted commands."
                             ),
                         ]
                     ),
@@ -2821,7 +2821,7 @@ class LavalinkPlayer(wavelink.Player):
                                     if self.text_channel.owner_id == self.bot.user.id:
                                         await self.text_channel.edit(archived=False)
                                     else:
-                                        await self.text_channel.send("Unarchiving the topic.", delete_after=2)
+                                        await self.text_channel.send("Unarchiving the thread.", delete_after=2)
 
                                 await self.message.edit(allowed_mentions=self.allowed_mentions, **data)
                                 await asyncio.sleep(0.5)

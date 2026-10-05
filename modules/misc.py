@@ -292,7 +292,7 @@ class Misc(commands.Cog):
                         embeds.append(
                             disnake.Embed(
                                 color=color,
-                                description=f"To see all my commands, use slash command (**/**) in the server. " \
+                                description=f"To see all my commands, use slash commands (**/**) in the server " \
                                              f"**{guild.name}**"
                             ).set_image(url=image)
                         )
@@ -317,7 +317,7 @@ class Misc(commands.Cog):
 
                         if bots_in_guild:
 
-                            msg = f"I noticed there are other bots in the server **{guild.name}** where I am compatible with " \
+                            msg = f"I noticed there are other bots in the server **{guild.name}** that I'm compatible with in " \
                                    f"the multi-voice system: {', '.join(b.user.mention for b in bots_in_guild)}\n\n" \
                                    f"When using music commands (e.g., play) without one of the bots connected in the channel, " \
                                     "one of the available bots in the server will be used."
@@ -334,7 +334,7 @@ class Misc(commands.Cog):
                                 send_video = msg
 
                         elif bots_outside_guild and self.bot.config.get('MULTIVOICE_VIDEO_DEMO_URL'):
-                            send_video = "**If there is demand in your server, you can also add more extra music bots.\n" \
+                            send_video = "**If there is demand in your server, you can also add extra music bots.\n" \
                                          "All bots share the same prefix and slash command, eliminating the need " \
                                          f"to remember prefixes and slash commands for each individual bot.\n\n" \
                                          f"Check out the [video]({self.bot.config['MULTIVOICE_VIDEO_DEMO_URL']}) demonstrating the use of multi-bot in practice.**"
@@ -367,7 +367,7 @@ class Misc(commands.Cog):
 
         embeds = [
             disnake.Embed(
-                color=color, description="Hello! To see all my commands, type slash command (**/**)\n"
+                color=color, description="Hello! To see all my commands, use slash commands (**/**)\n"
                                          "`Note: If the commands are not appearing on your server, "
                                          "it might have reached the limit of bots with registered slash commands "
                                          "(if there are more than 50 integrations/apps on your server).`"
@@ -392,7 +392,7 @@ class Misc(commands.Cog):
 
         if bots_in_guild:
 
-            msg = f"I noticed there are other bots in the server **{guild.name}** where I am compatible with " \
+            msg = f"I noticed there are other bots in the server **{guild.name}** that I'm compatible with in " \
                   f"the multi-voice system: {', '.join(b.user.mention for b in bots_in_guild)}\n\n" \
                   f"When using music commands (e.g., play) without one of the bots connected in the channel, one of " \
                   f"the available bots in the server will be used."
@@ -408,7 +408,7 @@ class Misc(commands.Cog):
                 send_video = msg
 
         elif bots_outside_guild and self.bot.config.get('MULTIVOICE_VIDEO_DEMO_URL'):
-            send_video = "**If there is demand in your server, you can also add more extra music bots.\n" \
+            send_video = "**If there is demand in your server, you can also add extra music bots.\n" \
                           "All bots share the same prefix and slash command, eliminating the need " \
                           "to memorize prefixes and slash commands for each individual bot.\n\n" \
                         f"Check out the [video]({self.bot.config['MULTIVOICE_VIDEO_DEMO_URL']}) demonstrating the use of multi-bot in practice.**"

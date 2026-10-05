@@ -45,7 +45,7 @@ class VolumeInteraction(disnake.ui.View):
         for l in [5, 20, 40, 60, 80, 100, 120, 150]:
 
             if l > 100:
-                description = "Above 100%, the audio can become very bad.."
+                description = "Above 100%, the audio can become very bad."
             else:
                 description = None
             opts.append(disnake.SelectOption(label=f"{l}%", value=f"vol_{l}", description=description))
@@ -168,7 +168,7 @@ class QueueInteraction(disnake.ui.View):
 
         await inter.response.send_modal(
             ViewModal(
-                view=self, title="Move selected music", custom_id="queue_move_modal",
+                view=self, title="Move selected song", custom_id="queue_move_modal",
                 components=[
                     disnake.ui.TextInput(
                         style=disnake.TextInputStyle.short,
@@ -247,7 +247,7 @@ class QueueInteraction(disnake.ui.View):
             index = (self.max_items*self.current_page) + n + 1
 
             if self.current_track == t:
-                txt += f"`╔{'='*50}`\n`║` **{index}º) [{fix_characters(t.title, limit=37)}]({t.uri})**\n" \
+                txt += f"`╔{'='*50}`\n`║` **{index}) [{fix_characters(t.title, limit=37)}]({t.uri})**\n" \
                        f"`║ ⏲️`  **{duration}**" + (f" - `Repetitions: {t.track_loops}`" if t.track_loops else "") + \
                        " **|** " + (f"`✋` <@{t.requester}>" if not t.autoplay else f"`👍⠂Recommended`") + f"\n`╚{'='*50}`\n"
             else:
@@ -285,7 +285,7 @@ class QueueInteraction(disnake.ui.View):
                 break
 
         if not track:
-            await interaction.send(f"Music with id \"{track_id}\" not found in the player's queue...", ephemeral=True)
+            await interaction.send(f"Song with id \"{track_id}\" not found in the player's queue...", ephemeral=True)
             return
 
         self.current_track = track
@@ -301,7 +301,7 @@ class QueueInteraction(disnake.ui.View):
         try:
             player = self.bot.music.players[self.user.guild.id]
         except KeyError:
-            await interaction.send("The player has already been finalized...", ephemeral=True)
+            await interaction.send("The player has already been terminated...", ephemeral=True)
             self.stop()
             return
 
@@ -316,7 +316,7 @@ class QueueInteraction(disnake.ui.View):
                 if player.current and player.current.unique_id == self.current_track.unique_id:
                     await check_cmd(self.bot.get_slash_command("seek"), interaction)
                     await player.seek(0)
-                    player.set_command_log(emoji="⏪", text=f"{interaction.author.mention} rewinded music to: `0:00`")
+                    player.set_command_log(emoji="⏪", text=f"{interaction.author.mention} rewound the song to: `0:00`")
                     player.update = True
                     await interaction.response.defer()
                     return
@@ -744,7 +744,7 @@ class FavModalImport(disnake.ui.Modal):
 
                 if len(url) > (max_url_chars := self.view.bot.config["USER_FAV_MAX_URL_LENGTH"]):
                     await inter.send(
-                        f"**An item from your file {url} exceeds the allowed character limit:{max_url_chars}**",
+                        f"**An item from your file {url} exceeds the allowed character limit: {max_url_chars}**",
                         ephemeral=True)
                     return
 
@@ -759,7 +759,7 @@ class FavModalImport(disnake.ui.Modal):
             for name in json_data.keys():
                 if len(name) > (max_name_chars := self.view.bot.config["USER_FAV_MAX_NAME_LENGTH"]):
                     await inter.edit_original_message(
-                        f"**An item from your file ({name}) exceeds the allowed character limit:{max_name_chars}**")
+                        f"**An item from your file ({name}) exceeds the allowed character limit: {max_name_chars}**")
                     return
                 try:
                     del self.view.data["fav_links"][name.lower()]
@@ -769,7 +769,7 @@ class FavModalImport(disnake.ui.Modal):
             if self.view.bot.config["MAX_USER_FAVS"] > 0 and not (await self.view.bot.is_owner(inter.author)):
 
                 if (json_size := len(json_data)) > self.view.bot.config["MAX_USER_FAVS"]:
-                    await inter.edit_original_message(f"The number of items in your favorite file exceeds the maximum allowed ({self.view.bot.config['MAX_USER_FAVS']}).")
+                    await inter.edit_original_message(f"The number of items in your favorites file exceeds the maximum allowed ({self.view.bot.config['MAX_USER_FAVS']}).")
                     return
 
                 if (json_size + (user_favs := len(self.view.data["fav_links"]))) > self.view.bot.config[
@@ -788,10 +788,10 @@ class FavModalImport(disnake.ui.Modal):
             await inter.edit_original_message(content="**Imported favorites successfully!**")
 
             if (s := len(json_data)) > 1:
-                self.view.log = f"{s} Favorites have been successfully imported.."
+                self.view.log = f"{s} Favorites have been successfully imported."
             else:
                 name = next(iter(json_data))
-                self.view.log = f"The favorite [`{name}`]({json_data[name]}) was successfully imported.."
+                self.view.log = f"The favorite [`{name}`]({json_data[name]}) was successfully imported."
 
 
         elif self.view.mode == ViewMode.guild_fav_manager:
@@ -810,18 +810,18 @@ class FavModalImport(disnake.ui.Modal):
 
                 if len(data['url']) > (max_url_chars := self.view.bot.config["USER_FAV_MAX_URL_LENGTH"]):
                     await inter.send(
-                        f"**One item from your file exceeds the allowed character limit.:{max_url_chars}\nURL:** {data['url']}",
+                        f"**One item from your file exceeds the allowed character limit: {max_url_chars}\nURL:** {data['url']}",
                         ephemeral=True)
                     return
 
                 if len(data['description']) > 50:
                     await inter.send(
-                        f"**One item from your file exceeds the allowed character limit:{max_url_chars}\nDescription:** {data['description']}",
+                        f"**One item from your file exceeds the allowed character limit: {max_url_chars}\nDescription:** {data['description']}",
                         ephemeral=True)
                     return
 
                 if not isinstance(data['url'], str) or not URL_REG.match(data['url']):
-                    await inter.send(f"Your file contains an invalid link.: ```ldif\n{data['url']}```", ephemeral=True)
+                    await inter.send(f"Your file contains an invalid link: ```ldif\n{data['url']}```", ephemeral=True)
                     return
 
             await inter.response.defer(ephemeral=True)
@@ -836,7 +836,7 @@ class FavModalImport(disnake.ui.Modal):
             for name in json_data.keys():
                 if len(name) > (max_name_chars := 25):
                     await inter.edit_original_message(
-                        f"**An item from your file ({name}) exceeds the allowed character limit.:{max_name_chars}**")
+                        f"**An item from your file ({name}) exceeds the allowed character limit: {max_name_chars}**")
                     return
                 try:
                     del self.view.guild_data["player_controller"]["fav_links"][name]
@@ -845,12 +845,12 @@ class FavModalImport(disnake.ui.Modal):
 
             if (json_size := len(json_data)) > 25:
                 await inter.edit_original_message(
-                    f"The number of items in the file exceeds the maximum allowed quantity. (25).")
+                    f"The number of items in the file exceeds the maximum allowed quantity (25).")
                 return
 
             if (json_size + (user_favs := len(self.view.guild_data["player_controller"]["fav_links"]))) > 25:
                 await inter.edit_original_message(
-                    "The server's music playlist does not have enough space to add all the items from your file....\n"
+                    "The server's music playlist does not have enough space to add all the items from your file...\n"
                     f"Current limit: 25\n"
                     f"Current count of saved links: {user_favs}\n"
                     f"You need: {(json_size + user_favs) - 25}")
@@ -862,10 +862,10 @@ class FavModalImport(disnake.ui.Modal):
 
             guild = self.view.bot.get_guild(inter.guild_id)
 
-            await inter.edit_original_message(content="**Fixed server links have been successfully imported.!**")
+            await inter.edit_original_message(content="**Pinned server links have been successfully imported!**")
 
             if (s := len(json_data)) > 1:
-                self.view.log = f"{s} Links have been successfully imported to the server's favorites list.."
+                self.view.log = f"{s} Links have been successfully imported to the server's favorites list."
             else:
                 name = next(iter(json_data))
                 self.view.log = f"The link [`{name}`]({json_data[name]}) was successfully imported to the server's list of links..."
@@ -877,7 +877,7 @@ class FavModalImport(disnake.ui.Modal):
             if retry_after := self.view.bot.get_cog("Music").fav_import_export_cd.get_bucket(inter).update_rate_limit():
                 if retry_after < 1:
                     retry_after = 1
-                await inter.send("**You should wait {} to import..**".format(
+                await inter.send("**You should wait {} to import.**".format(
                     time_format(int(retry_after) * 1000, use_names=True)), ephemeral=True)
                 return
 
@@ -888,11 +888,11 @@ class FavModalImport(disnake.ui.Modal):
 
                 if len(url) > (max_url_chars := 150):
                     await inter.edit_original_message(
-                        f"**An item from your file {url} exceeds the allowed character limit.:{max_url_chars}**")
+                        f"**An item from your file {url} exceeds the allowed character limit: {max_url_chars}**")
                     return
 
                 if not isinstance(url, str) or not URL_REG.match(url):
-                    await inter.edit_original_message(f"Your file contains an invalid link.: ```ldif\n{url}```")
+                    await inter.edit_original_message(f"Your file contains an invalid link: ```ldif\n{url}```")
                     return
 
             await inter.response.defer(ephemeral=True)
@@ -915,7 +915,7 @@ class FavModalImport(disnake.ui.Modal):
                 if (json_size + (user_integrations := len(self.view.data["integration_links"]))) > self.view.bot.config[
                     "MAX_USER_INTEGRATIONS"]:
                     await inter.edit_original_message(
-                        "You do not have enough space to add all the integrations to your file....\n"
+                        "You do not have enough space to add all the integrations from your file...\n"
                         f"Current limit: {self.view.bot.config['MAX_USER_INTEGRATIONS']}\n"
                         f"Number of saved integrations: {user_integrations}\n"
                         f"You need: {(json_size + user_integrations) - self.view.bot.config['MAX_USER_INTEGRATIONS']}")
@@ -926,14 +926,14 @@ class FavModalImport(disnake.ui.Modal):
             await self.view.bot.update_global_data(inter.author.id, self.view.data, db_name=DBModel.users)
 
             await inter.edit_original_message(
-                content="**Successful imports of integrations!**"
+                content="**Integrations imported successfully!**"
             )
 
             if (s := len(json_data)) > 1:
-                self.view.log = f"{s} Integrations have been successfully imported.."
+                self.view.log = f"{s} Integrations have been successfully imported."
             else:
                 name = next(iter(json_data))
-                self.view.log = f"The integration [`{name}`]({json_data[name]}) was successfully imported.."
+                self.view.log = f"The integration [`{name}`]({json_data[name]}) was successfully imported."
 
         else:
             raise GenericError(f"**The feature is not yet implemented: {self.view.mode} | {type(self.view.mode)}**")
@@ -1037,7 +1037,7 @@ class FavModalAdd(disnake.ui.Modal):
             except IndexError:
                 await inter.send(
                     embed=disnake.Embed(
-                        description=f"**No valid link found.:** {url}",
+                        description=f"**No valid link found:** {url}",
                         color=disnake.Color.red()
                     ), ephemeral=True
                 )
@@ -1070,7 +1070,7 @@ class FavModalAdd(disnake.ui.Modal):
             await inter.edit_original_message(
                 embed=disnake.Embed(
                     description="**Link saved/updated successfully in your favorites!\n"
-                                "It will appear in the following occasions:** ```\n"
+                                "It will appear on the following occasions:** ```\n"
                                 "- When using the /play command (selecting from the search autocomplete)\n"
                                 "- When clicking the favorite play button on the player.\n"
                                 "- When using the play command (prefixed) without a name or link.```",
@@ -1086,7 +1086,7 @@ class FavModalAdd(disnake.ui.Modal):
             except IndexError:
                 await inter.send(
                     embed=disnake.Embed(
-                        description=f"**No valid link found.:** {url}",
+                        description=f"**No valid link found:** {url}",
                         color=disnake.Color.red()
                     ), ephemeral=True
                 )
@@ -1124,7 +1124,7 @@ class FavModalAdd(disnake.ui.Modal):
             guild = inter.guild or self.view.bot.get_guild(inter.guild_id)
 
             await inter.edit_original_message(
-                embed=disnake.Embed(description="**Link added/updated successfully in player's pinned messages!\n"
+                embed=disnake.Embed(description="**Link added/updated successfully in the player's pinned links!\n"
                                                 "Members can use it directly in the player-controller when not in use.**",
                                     color=self.view.bot.get_color(guild.me)), view=None)
 
@@ -1222,7 +1222,7 @@ class FavModalAdd(disnake.ui.Modal):
                 except Exception as e:
                     await inter.edit_original_message(
                         embed=disnake.Embed(
-                            description="**An error occurred while retrieving information from Spotify:** ```py\n"
+                            description="**An error occurred while retrieving information from Deezer:** ```py\n"
                                         f"{repr(e)}```",
                             color=self.view.bot.get_color()
                         )
@@ -1269,7 +1269,7 @@ class FavModalAdd(disnake.ui.Modal):
                     msg = f"**The user/channel from the provided link does not exist:**\n{url}"
 
                     if source == "[YT]:":
-                        msg += f"\n\n`Note: Check if the link contains a user with @, ex: @ytchannel`"
+                        msg += f"\n\n`Note: Check if the link contains a user with @, e.g. @ytchannel`"
 
                     await inter.edit_original_message(
                         embed=disnake.Embed(
@@ -1309,7 +1309,7 @@ class FavModalAdd(disnake.ui.Modal):
             await inter.edit_original_message(
                 embed=disnake.Embed(
                     description=f"**Integration added/edited successfully:** [`{title}`]({data['url']})\n"
-                                "**It will appear in the following occasions:** ```\n"
+                                "**It will appear on the following occasions:** ```\n"
                                 "- When using the /play command (selecting the integration from the search autocomplete)\n"
                                 "- When clicking on the favorite play button of the player.\n"
                                 "- When using the play command (prefixed) without a name or link.```",
@@ -1450,7 +1450,7 @@ class FavMenuView(disnake.ui.View):
             remove_button.callback = self.remove_callback
             self.add_item(remove_button)
 
-            clear_button = disnake.ui.Button(label="Clean favorites", emoji="🚮", disabled=not self.data["fav_links"])
+            clear_button = disnake.ui.Button(label="Clear favorites", emoji="🚮", disabled=not self.data["fav_links"])
             clear_button.callback = self.clear_callback
             self.add_item(clear_button)
 
@@ -1467,7 +1467,7 @@ class FavMenuView(disnake.ui.View):
             remove_button.callback = self.remove_callback
             self.add_item(remove_button)
 
-            clear_button = disnake.ui.Button(label="Clean favorites", emoji="🚮", disabled=not self.guild_data["player_controller"]["fav_links"])
+            clear_button = disnake.ui.Button(label="Clear favorites", emoji="🚮", disabled=not self.guild_data["player_controller"]["fav_links"])
             clear_button.callback = self.clear_callback
             self.add_item(clear_button)
 
@@ -1480,7 +1480,7 @@ class FavMenuView(disnake.ui.View):
             remove_button.callback = self.remove_callback
             self.add_item(remove_button)
 
-            clear_button = disnake.ui.Button(label="Clean Integrations", emoji="🚮", disabled=not self.data["integration_links"])
+            clear_button = disnake.ui.Button(label="Clear Integrations", emoji="🚮", disabled=not self.data["integration_links"])
             clear_button.callback = self.clear_callback
             self.add_item(clear_button)
 
@@ -1596,7 +1596,7 @@ class FavMenuView(disnake.ui.View):
             if not self.light_mode:
                 txt += "\n\n**How to use them?**\n" \
                        f"* Using the command {cmd} (selecting the Favorite in the search autocomplete)\n" \
-                        "* Clicking on the button/select menu to play favorite/song integration on the player.\n" \
+                        "* Clicking on the button/select menu to play a favorite/integration on the player.\n" \
                         f"* Using the command {self.prefix}{self.bot.get_cog('Music').play_legacy.name} without including a song or video name or link.\n" \
                         "* Using the play Favorites button below.\n"
 
@@ -1620,7 +1620,7 @@ class FavMenuView(disnake.ui.View):
                 ), max_size=1400)[0]
 
                 txt += "\n\n**How to use them?**\n" \
-                        f"* Using the player selection menu during the waiting mode.\n" \
+                        f"* Using the player selection menu while the player is in idle mode.\n" \
                        f"\n`Bot selected:` {self.bot.user.mention}"
 
         elif self.mode == ViewMode.integrations_manager:
@@ -1646,7 +1646,7 @@ class FavMenuView(disnake.ui.View):
                 if not self.light_mode:
                     txt += "\n\n**How to use them?**\n" \
                            f"* Using the command {cmd} (selecting the integration in the search autocomplete)\n" \
-                           "* Clicking on the button/select menu to play song from your favorite/integration on the player.\n" \
+                           "* Clicking on the button/select menu to play a song from your favorite/integration on the player.\n" \
                            f"* Using the command {self.prefix}{self.bot.get_cog('Music').play_legacy.name} without including a song or video name or link.\n" \
                            "* Using the play Favorites button below.\n"
 
@@ -1908,7 +1908,7 @@ class FavMenuView(disnake.ui.View):
 
         if self.mode == ViewMode.fav_manager:
             if not self.data["fav_links"]:
-                await inter.send(f"**You don't have any favorite links..\n"
+                await inter.send(f"**You don't have any favorite links.\n"
                                 f"You can add them using the command: {cmd}**", ephemeral=True)
                 return
 
@@ -1920,7 +1920,7 @@ class FavMenuView(disnake.ui.View):
 
         elif self.mode == ViewMode.guild_fav_manager:
             if not self.guild_data["player_controller"]["fav_links"]:
-                await inter.edit_original_message(content=f"**There are no pinned songs/playlists in the server..\n"
+                await inter.edit_original_message(content=f"**There are no pinned songs/playlists in the server.\n"
                                                         f"You can add them using the command: {cmd}**")
 
             fp = BytesIO(bytes(json.dumps(self.guild_data["player_controller"]["fav_links"], indent=4), 'utf-8'))
@@ -2227,7 +2227,7 @@ class SetStageTitle(disnake.ui.View):
             inter.author = guild.get_member(inter.author.id)
 
             if not inter.author.guild_permissions.manage_guild:
-                await inter.send("**You do not have permission to manage server to change the voice channel status**", ephemeral=True)
+                await inter.send("**You need the Manage Server permission to change the voice channel status**", ephemeral=True)
                 return
 
             self.data["voice_channel_status"] = values["status_voice_value"]
@@ -2282,7 +2282,7 @@ class SetStageTitle(disnake.ui.View):
             inter.author = player.guild.get_member(inter.author.id)
 
             if not inter.author.guild_permissions.manage_guild:
-                await inter.send("You do not have permission to manage server to change the voice channel status", ephemeral=True)
+                await inter.send("You need the Manage Server permission to change the voice channel status", ephemeral=True)
                 return
 
             player.stage_title_event = bool(values["status_voice_value"])
@@ -2840,11 +2840,11 @@ class SkinEditorMenu(disnake.ui.View):
 
         await inter.response.send_modal(
             ViewModal(
-                view=self, title="Placeholder for the queue music list", custom_id="skin_editor_setup_queue",
+                view=self, title="Placeholder for the queue song list", custom_id="skin_editor_setup_queue",
                 components=[
                     disnake.ui.TextInput(
                         style=disnake.TextInputStyle.short,
-                        label="Text formatting for the music names:",
+                        label="Text formatting for the song names:",
                         custom_id="queue_format",
                         value=self.message_data["queue_format"],
                         max_length=120,
@@ -3269,7 +3269,7 @@ class SelectBotVoice(disnake.ui.View):
         guild = bot.get_guild(inter.guild_id)
 
         if not guild:
-            await inter.send(f"{bot.user.mention} is no longer on the server....", ephemeral=True)
+            await inter.send(f"{bot.user.mention} is no longer on the server...", ephemeral=True)
             await self.update_message()
             return
 
@@ -3284,7 +3284,7 @@ class SelectBotVoice(disnake.ui.View):
 
             if not vc:
                 await inter.send(
-                    f"{bot.user.mention} You have an active player but are not connected to a voice channel...",
+                    f"{bot.user.mention} has an active player but is not connected to a voice channel...",
                     ephemeral=True)
                 await self.update_message()
                 return

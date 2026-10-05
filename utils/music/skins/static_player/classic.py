@@ -77,7 +77,7 @@ class ClassicStaticSkin:
                                   itertools.islice(player.queue, 15)))
 
             if qsize > 15:
-                data["content"] += f"\n\n[0;37mAnd more[0m [0;35m{qsize}[0m [0;37msong{'s'[:qsize^1]}.[0m"
+                data["content"] += f"\n\n[0;37mAnd[0m [0;35m{qsize}[0m [0;37mmore song{'s'[:qsize^1]}.[0m"
 
             data["content"] += "```"
 
@@ -114,7 +114,7 @@ class ClassicStaticSkin:
                 min_values=0, max_values=1, required = False,
                 options=[
                     disnake.SelectOption(
-                        label="Add music", emoji="<:add_music:588172015760965654>",
+                        label="Add song", emoji="<:add_music:588172015760965654>",
                         value=PlayerControls.add_song,
                         description="Add a song/playlist to the queue."
                     ),
@@ -151,7 +151,7 @@ class ClassicStaticSkin:
                     disnake.SelectOption(
                         label=("Disable" if player.nightcore else "Enable") + " nightcore effect", emoji="🇳",
                         value=PlayerControls.nightcore,
-                        description="Effect that increases speed and pitch of the music."
+                        description="Effect that increases speed and pitch of the song."
                     ),
                     disnake.SelectOption(
                         label=("Disable" if player.autoplay else "Enable") + " autoplay", emoji="🔄",
@@ -166,7 +166,7 @@ class ClassicStaticSkin:
                     disnake.SelectOption(
                         label=("Disable" if player.restrict_mode else "Enable") + " restricted mode", emoji="🔐",
                         value=PlayerControls.restrict_mode,
-                        description="Only DJ's/Staff's can use restricted commands."
+                        description="Only DJs/Staff can use restricted commands."
                     ),
                 ]
             ),
@@ -193,7 +193,7 @@ class ClassicStaticSkin:
                 disnake.SelectOption(
                     label= "View lyrics", emoji="📃",
                     value=PlayerControls.lyrics,
-                    description="Get lyrics of current music."
+                    description="Get the lyrics of the current song."
                 )
             )
 

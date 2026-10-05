@@ -205,7 +205,7 @@ class Node:
             self.update_info(info)
 
         else:
-            print(f"📶 - {self._client.bot.user} - Starting music server: {self.identifier}")
+            print(f"📶 - {self._client.bot.user} - Connecting to music server: {self.identifier}")
             while not self._client.bot.is_closed():
                 try:
                     async with self._client.bot.session.get(f"{self.rest_uri}/v4/info", timeout=45, headers={'Authorization': self.password}) as r:
@@ -429,7 +429,7 @@ class Node:
             try:
                 error = f"There was an error of severity '{new_data['exception']['severity']}' while loading tracks.\n\n{new_data['exception']['message']}"
             except KeyError:
-                error = f"There was an error of severity '{new_data['exception']['severity']}:\n{new_data['exception']['error']}"
+                error = f"There was an error of severity '{new_data['exception']['severity']}':\n{new_data['exception']['error']}"
             e = TrackLoadError(error=error, node=self, data=new_data)
 
             if not e.message:
@@ -574,7 +574,7 @@ class Node:
 
             if not resp.status == 200:
                 raise BuildTrackError(f'Failed to build track. Status: {data["status"]}, Error: {data["error"]}.'
-                                      f'Check the identifier is correct and try again.')
+                                      f' Check the identifier is correct and try again.')
 
             track = Track(id_=identifier, info=data)
             return track

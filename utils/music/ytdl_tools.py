@@ -67,7 +67,7 @@ class YTDLTools:
                 continue
 
             if e["age_limit"] > 17 and e["ie_key"] != "Twitter":
-                raise GenericError("**This link contains content for over 18!**")
+                raise GenericError("**This link contains 18+ content!**")
 
             if not loop:
                 loop = asyncio.get_event_loop()
@@ -87,7 +87,7 @@ class YTDLTools:
 
             try:
                 if entrie["age_limit"] > 17:
-                    raise GenericError("**This link contains content for over 18!**")
+                    raise GenericError("**This link contains 18+ content!**")
             except KeyError:
                 pass
 

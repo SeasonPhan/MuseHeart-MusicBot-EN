@@ -208,7 +208,7 @@ class ErrorHandler(commands.Cog):
             return
 
         if isinstance(error, commands.NotOwner):
-            print(f"{ctx.author} [{ctx.author.id}] is not the bot owner to use the command: {ctx.command.name}")
+            print(f"{ctx.author} [{ctx.author.id}] is not the bot owner and cannot use the command: {ctx.command.name}")
             return
 
         try:
@@ -345,7 +345,7 @@ class ErrorHandler(commands.Cog):
                 ),
                 disnake.ui.TextInput(
                     style=disnake.TextInputStyle.short,
-                    label="Error Image Link/Print (Optional)",
+                    label="Error Screenshot/Image Link (Optional)",
                     custom_id="image_url",
                     max_length=300,
                     required=False

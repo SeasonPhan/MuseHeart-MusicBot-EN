@@ -412,7 +412,7 @@ async def send_idle_embed(
 
     embed = disnake.Embed(description="**Join a voice channel and request a song here " +
                                       ("in the post" if is_forum else "in the channel or in the conversation below") +
-                                      f" (You can click the button below or use the {cmd} command here or in other channel)**\n\n"
+                                      f" (You can click the button below or use the {cmd} command here or in another channel)**\n\n"
                                       "**You can use a name or a compatible website link:**\n"
                                       "[`Youtube`](<https://www.youtube.com/>), [`Soundcloud`](<https://soundcloud.com/>), " \
                                       "[`Spotify`](<https://open.spotify.com/>), [`Twitch`](<https://www.twitch.tv/>)",
@@ -740,7 +740,7 @@ async def select_bot_pool(inter: Union[CustomContext, disnake.MessageInteraction
         if new_inter.data.values[0] == "cancel":
             await func(
                 embed=disnake.Embed(
-                    description="**Canceled Selection!**",
+                    description="**Selection canceled!**",
                     color=inter.bot.get_color()
                 ),
                 components=None

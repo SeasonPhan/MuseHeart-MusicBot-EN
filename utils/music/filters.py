@@ -70,7 +70,7 @@ class AudioFilter:
             raise InvalidFilterArgument("Tremolo frequency must be more than 0")
 
         if not 0.1 < depth < 1.1:
-            raise InvalidFilterArgument("Tremolo frequency must be between 0,1 and 1.0")
+            raise InvalidFilterArgument("Tremolo depth must be between 0.1 and 1.0")
 
         return cls(
             "tremolo", {
@@ -86,7 +86,7 @@ class AudioFilter:
             raise InvalidFilterArgument("Vibrato frequency must be more than 0.")
 
         if not 0.1 < depth < 1.1:
-            raise InvalidFilterArgument("Vibrato frequency must be between 0.1 and 1.0")
+            raise InvalidFilterArgument("Vibrato depth must be between 0.1 and 1.0")
 
         return cls(
             "vibrato", {

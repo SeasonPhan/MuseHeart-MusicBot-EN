@@ -52,7 +52,7 @@ class LastFMView(disnake.ui.View):
 
         if self.session_key:
 
-            btn1 = disnake.ui.Button(label=f"{'Desativar' if self.scrobble_enabled else 'Ativar'} scrobble/registro")
+            btn1 = disnake.ui.Button(label=f"{'Disable' if self.scrobble_enabled else 'Enable'} scrobble/log")
             btn1.callback = self.scrobble_enable
             self.add_item(btn1)
 
@@ -218,7 +218,7 @@ class LastFmCog(commands.Cog):
             except AttributeError:
                 slashcmd = "/play"
 
-            txt += f"\n`Listen to your music in a voice channel using the` {slashcmd} `command to log them " \
+            txt += f"\n`Listen to your songs in a voice channel using the` {slashcmd} `command to log them " \
                     f"to your last.fm account`\n"
 
             embeds = [disnake.Embed(
@@ -233,8 +233,8 @@ class LastFmCog(commands.Cog):
                 if top_tracks:
 
                     embed = disnake.Embed(
-                        description="\n".join(f"> ` {n+1}º ` [`{t['name']}`]({t['url']}) `By:` [`{t['artist']['name']}`]({t['artist']['url']}) `(x{int(t['playcount']):,})`" for n, t in enumerate(top_tracks)),
-                        color=embed_color).set_author(name=f"Top 3: Songs you listened to the most (out of the total {int(lastfm_user['track_count']):,}):",
+                        description="\n".join(f"> ` {n+1}. ` [`{t['name']}`]({t['url']}) `By:` [`{t['artist']['name']}`]({t['artist']['url']}) `(x{int(t['playcount']):,})`" for n, t in enumerate(top_tracks)),
+                        color=embed_color).set_author(name=f"Top 3: Songs you listened to the most (out of a total of {int(lastfm_user['track_count']):,}):",
                         icon_url="https://i.ibb.co/Hhcwdf9/muse-heart-disc.jpg",
                         url=f"https://www.last.fm/user/{lastfm_user['name']}/library")
 
@@ -268,8 +268,8 @@ class LastFmCog(commands.Cog):
                 if top_artists:
 
                     embed = disnake.Embed(
-                        description="\n".join(f"> ` {n+1}º ` [`{t['name']}`]({t['url']}) `(x{int(t['playcount']):,})`" for n, t in enumerate(top_artists)),
-                        color=embed_color).set_author(name=f"Top 3: Artists you listened to the most (out of the total {int(lastfm_user['artist_count']):,}):",
+                        description="\n".join(f"> ` {n+1}. ` [`{t['name']}`]({t['url']}) `(x{int(t['playcount']):,})`" for n, t in enumerate(top_artists)),
+                        color=embed_color).set_author(name=f"Top 3: Artists you listened to the most (out of a total of {int(lastfm_user['artist_count']):,}):",
                         icon_url="https://i.ibb.co/8KQzkyy/muse-heart-artist-icon.jpg",
                         url=f"https://www.last.fm/user/{lastfm_user['name']}/library/artists")
 
@@ -293,8 +293,8 @@ class LastFmCog(commands.Cog):
                 if top_albuns:
 
                     embed = disnake.Embed(
-                        description="\n".join(f"> ` {n+1}º ` [`{b['name']}`]({b['url']}) `by:` [`{b['artist']['name']}`]({b['artist']['url']}) `(x{int(b['playcount']):,})`" for n, b in enumerate(top_albuns)),
-                        color=embed_color).set_author(name=f"Top 3: Albums you listened to the most (out of the total {int(lastfm_user['album_count']):,}):",
+                        description="\n".join(f"> ` {n+1}. ` [`{b['name']}`]({b['url']}) `by:` [`{b['artist']['name']}`]({b['artist']['url']}) `(x{int(b['playcount']):,})`" for n, b in enumerate(top_albuns)),
+                        color=embed_color).set_author(name=f"Top 3: Albums you listened to the most (out of a total of {int(lastfm_user['album_count']):,}):",
                         icon_url="https://i.ibb.co/s6TQK5D/muse-heart-disc-album.jpg",
                         url=f"https://www.last.fm/user/{lastfm_user['name']}/library/albums")
 
@@ -320,7 +320,7 @@ class LastFmCog(commands.Cog):
             embeds = [disnake.Embed(
                 description="**Link (or create) an account on [last.fm](<https://www.last.fm/home>) "
                             "to log all the music you listen to here on your Last.fm profile. "
-                            "This will allow you to get music/artist/album recommendations, have a general statistic of the music you listened to, "
+                            "This will allow you to get music/artist/album recommendations, see general statistics of the music you listened to, "
                             "and gain access to an amazing community on the platform.**",
                 color=embed_color
             ).set_thumbnail(url="https://www.last.fm/static/images/lastfm_avatar_twitter.52a5d69a85ac.png")]

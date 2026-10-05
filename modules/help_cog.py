@@ -161,7 +161,7 @@ class HelpCog(commands.Cog, name="Help"):
         txt = f"### ⌨️ ⠂Command: {ctx.prefix}{cmd}\n```\n{help_cmd}```\n"
         if cmd.aliases:
             aliases = " | ".join([f"{ctx.prefix}{ali}" for ali in cmd.aliases])
-            txt += f"🔄 **⠂Alternatives:** ```\n{aliases}```\n"
+            txt += f"🔄 **⠂Aliases:** ```\n{aliases}```\n"
         if hasattr(cmd, 'commands'):
             subs = " | ".join([c.name for c in cmd.commands if (await check_perms(ctx, c))])
             txt += f"🔢 **⠂Subcommands:** ```{subs}``` Use the command: `[ {ctx.prefix}help {cmd} subcommand ]` to see more details of the subcommand.\n\n"
@@ -255,7 +255,7 @@ class HelpCog(commands.Cog, name="Help"):
             lst.append(f"\n\n**{data['emoji']} ⠂{category} ({n} command{'s' if n > 1 else ''}):**\n`{cmds}`")
 
         txt = f"{''.join(lst)}\n\n" \
-              "To get information of a command directly, use:\n" \
+              "To get information about a command directly, use:\n" \
               f"`{ctx.prefix}{ctx.invoked_with} <command/alias>`"
 
         embed = disnake.Embed(

@@ -209,7 +209,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             return
 
         if len(ws_id) > 3:
-            self.write_message(json.dumps({"op": "disconnect", "reason": "You are trying to connect more than 3 users consecutively..."}))
+            self.write_message(json.dumps({"op": "disconnect", "reason": "You are trying to connect more than 3 users simultaneously..."}))
             self.close(code=4200)
             return
 
@@ -260,7 +260,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
 
         else:
 
-            print(f"🌐 - Connection Closed - Bot ID's: {self.bot_ids}")
+            print(f"🌐 - Connection Closed - Bot IDs: {self.bot_ids}")
 
             data = {"op": "close", "bot_id": self.bot_ids}
 

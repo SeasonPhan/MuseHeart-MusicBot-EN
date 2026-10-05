@@ -158,7 +158,7 @@ class DefaultSkin:
                 min_values=0, max_values=1, required = False,
                 options=[
                     disnake.SelectOption(
-                        label="Add music", emoji="<:add_music:588172015760965654>",
+                        label="Add song", emoji="<:add_music:588172015760965654>",
                         value=PlayerControls.add_song,
                         description="Add a song/playlist to the queue."
                     ),
@@ -210,7 +210,7 @@ class DefaultSkin:
                     disnake.SelectOption(
                         label=("Disable" if player.restrict_mode else "Enable") + " restricted mode", emoji="🔐",
                         value=PlayerControls.restrict_mode,
-                        description="Only DJ's/Staff can use restricted commands."
+                        description="Only DJs/Staff can use restricted commands."
                     ),
                 ]
             ),
@@ -221,7 +221,7 @@ class DefaultSkin:
                 disnake.SelectOption(
                     label= "View lyrics", emoji="📃",
                     value=PlayerControls.lyrics,
-                    description="Get lyrics of current music."
+                    description="Get the lyrics of the current song."
                 )
             )
 

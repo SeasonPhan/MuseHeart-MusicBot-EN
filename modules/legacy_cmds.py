@@ -123,7 +123,7 @@ class Owner(commands.Cog):
     updatelavalink_flags.add_argument('-yml', '--yml', action='store_true',
                                     help="Download the application.yml file.")
     updatelavalink_flags.add_argument("-resetids", "-reset", "--resetids", "--reset",
-                                    help="Reset music id info (useful to avoid problems with certain "
+                                    help="Reset track ID info (useful to avoid problems with certain "
                                         "changes in lavaplayer/lavalink).", action="store_true")
 
     @commands.is_owner()
@@ -299,7 +299,7 @@ class Owner(commands.Cog):
 
     update_flags = CommandArgparse()
     update_flags.add_argument("-force", "--force", action="store_true",
-                              help="Force update ignoring the state of the local repository).")
+                              help="Force update, ignoring the state of the local repository.")
     update_flags.add_argument("-pip", "--pip", action="store_true",
                               help="Install/update dependencies after the update.")
 
@@ -540,7 +540,7 @@ class Owner(commands.Cog):
     async def updatelog(self, ctx: Union[CustomContext, disnake.MessageInteraction], amount: int = 10):
 
         if not os.path.isdir(os.environ["GIT_DIR"]):
-            raise GenericError("No repository initiated in the bot's directory...\nNote: Use the update command.")
+            raise GenericError("No repository initialized in the bot's directory...\nNote: Use the update command.")
 
         if not self.bot.pool.remote_git_url:
             self.bot.pool.remote_git_url = self.bot.config["SOURCE_REPO"][:-4]
@@ -691,7 +691,7 @@ class Owner(commands.Cog):
     async def setguildprefix(self, ctx: CustomContext, server_id: int, prefix: str = None):
 
         if not 17 < len(str(server_id)) < 24:
-            raise GenericError("**The number of characters in the server ID must be between 18 to 23.**")
+            raise GenericError("**The number of characters in the server ID must be between 18 and 23.**")
 
         guild_data = await self.bot.get_global_data(server_id, db_name=DBModel.guilds)
 
@@ -948,7 +948,7 @@ class Owner(commands.Cog):
 
         try:
             ctx.bot.music.players[ctx.guild.id]  # type ignore
-            raise GenericError("**A player is already initiated on the server.**")
+            raise GenericError("**A player is already active on the server.**")
         except KeyError:
             pass
 

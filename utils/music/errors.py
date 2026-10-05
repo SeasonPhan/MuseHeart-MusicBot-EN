@@ -118,8 +118,8 @@ def parse_error(
             send_error = True
 
     elif isinstance(error, NotRequester):
-        error_txt = "**You must have requested the current song or be on the DJ list or have the permission of " \
-                    "**Manage Channels** to skip songs.**"
+        error_txt = "**You must have requested the current song or be on the DJ list or have the " \
+                    "**Manage Channels** permission to skip songs.**"
 
     elif isinstance(error, DiffVoiceChannel):
         error_txt = "**You must be in my current voice channel to use this command.**"
@@ -170,7 +170,7 @@ def parse_error(
                         "`If you want, you can add a favorite or integration to use this " \
                         "button next time. For that, you can click one of the buttons below.`"
         else:
-            error_txt = "**You used the command without including a name or link of a music or video and you don't have " \
+            error_txt = "**You used the command without including the name or link of a song or video and you don't have " \
                         "favorites or integrations to use this command directly this way...**\n\n" \
                         "`If you want, you can add a favorite or integration to use this " \
                         "command without including a name or link. For that, you can click one of the buttons below.`"
@@ -194,8 +194,8 @@ def parse_error(
             commands.BucketType.default: f"this command has already been used {txt}by someone"
         }
 
-        error_txt = f"{ctx.author.mention} **{txt[error.per]} and hasn't had{'s' if error.number > 1 else ''} " \
-                    f"{'s' if error.number > 1 else ''} finished{'s' if error.number > 1 else ''}!**"
+        error_txt = f"{ctx.author.mention} **{txt[error.per]} and " \
+                    f"{'they have' if error.number > 1 else 'it has'}n't finished yet!**"
 
     elif isinstance(error, TrackNotFound):
         error_txt = "**No results were found for your search...**"
@@ -222,7 +222,7 @@ def parse_error(
             error_txt = "**The playlist does not exist (or is private).**"
         elif "not made this video available in your country" in wave_error.lower() or \
                 "who has blocked it in your country on copyright grounds" in wave_error.lower():
-            error_txt = "**The content of this link is not available in the region where I am functioning...**"
+            error_txt = "**The content of this link is not available in the region where I am running...**"
 
     full_error_txt = ""
 

@@ -40,9 +40,9 @@ class LiteSkin:
             embed.description += f"<@{player.current.requester}>"
         else:
             try:
-                embed.description = f"[`[Recomendada]`]({player.current.info['extra']['related']['uri']})"
+                embed.description = f"[`[Recommended]`]({player.current.info['extra']['related']['uri']})"
             except:
-                embed.description = "`[Recomendada]`"
+                embed.description = "`[Recommended]`"
 
         if player.current.playlist_name:
             embed.description += f"\n> -# 🎼 **┃ Playlist:** [`{player.current.playlist_name}`]({player.current.playlist_url})"
