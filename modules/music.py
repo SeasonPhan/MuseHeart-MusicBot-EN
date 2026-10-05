@@ -4142,7 +4142,7 @@ class Music(commands.Cog):
             if (trackcount:=(len(tracklist) - 7)) > 0:
                 msg_txt += f"\n`and {trackcount} more song{'s'[:trackcount^1]}.`"
 
-            msg_txt += f"\n### ✅ ⠂Filter{(t:='s'[:len(txt)^1])} used:\n" + '\n'.join(txt)
+            msg_txt += f"\n### ✅ ⠂Filter{'s'[:len(txt)^1]} used:\n" + '\n'.join(txt)
 
             txt = [f"removed {deleted_tracks} song{'s'[:deleted_tracks^1]} from the queue via clear.", msg_txt]
 
@@ -4501,7 +4501,7 @@ class Music(commands.Cog):
             if (track_extra:=(moved_tracks - 7)) > 0:
                 msg_txt += f"\n`and {track_extra} more song{'s'[:track_extra^1]}.`"
 
-            msg_txt += f"\n### ✅ ⠂Filter{(t:='s'[:len(txt)^1])} used:\n" + '\n'.join(txt)
+            msg_txt += f"\n### ✅ ⠂Filter{'s'[:len(txt)^1]} used:\n" + '\n'.join(txt)
 
             txt = [f"moved {moved_tracks} song{'s'[:moved_tracks^1]} to position **[{position}]** in the queue.", msg_txt]
 

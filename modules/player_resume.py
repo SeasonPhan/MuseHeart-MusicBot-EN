@@ -59,7 +59,7 @@ class PlayerSession(commands.Cog):
         await self.save_info(player)
 
     @commands.is_owner()
-    @commands.command(hidden=True, description="Instantly save the players' information to the database.", aliases=["svplayers"])
+    @commands.command(hidden=True, description="Instantly save player information to the database.", aliases=["svplayers"])
     async def saveplayers(self, ctx: CustomContext):
 
         await ctx.defer()
@@ -74,7 +74,7 @@ class PlayerSession(commands.Cog):
                 except:
                     continue
 
-        txt = f"The current players' information has been successfully saved ({player_count})!" if player_count else "There are no active players..."
+        txt = f"Current player information has been successfully saved ({player_count})!" if player_count else "There are no active players..."
         await ctx.send(txt)
 
     async def queue_updater_task(self, player: LavalinkPlayer):
