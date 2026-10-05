@@ -59,7 +59,7 @@ class PlayerSession(commands.Cog):
         await self.save_info(player)
 
     @commands.is_owner()
-    @commands.command(hidden=True, description="Save information of players in the database instantly.", aliases=["svplayers"])
+    @commands.command(hidden=True, description="Instantly save the players' information to the database.", aliases=["svplayers"])
     async def saveplayers(self, ctx: CustomContext):
 
         await ctx.defer()
@@ -74,7 +74,7 @@ class PlayerSession(commands.Cog):
                 except:
                     continue
 
-        txt = f"The information of the current players has been successfully saved ({player_count})!" if player_count else "There are no active players..."
+        txt = f"The current players' information has been successfully saved ({player_count})!" if player_count else "There are no active players..."
         await ctx.send(txt)
 
     async def queue_updater_task(self, player: LavalinkPlayer):
@@ -362,7 +362,7 @@ class PlayerSession(commands.Cog):
             try:
                 await guild.me.edit(suppress=False)
             except Exception as e:
-                print(f"{self.bot.user} - Failure to speak on the server stage {guild.name}. Error: {repr(e)}")
+                print(f"{self.bot.user} - Failure to speak on the stage in the server {guild.name}. Error: {repr(e)}")
 
     async def resume_player(self, data: dict, hints: list = None):
 
@@ -497,7 +497,7 @@ class PlayerSession(commands.Cog):
                 if not voice_channel:
                     print(f"{self.bot.user} - Player Ignored: {guild.name} [{guild.id}]\nThe voice channel does not exist...")
                     try:
-                        msg = "Player finished because the voice channel does not exist or has been deleted."
+                        msg = "The player was terminated because the voice channel does not exist or has been deleted."
                         if not data["skin_static"]:
                             await text_channel.send(embed=disnake.Embed(description=msg, color=self.bot.get_color(guild.me)))
                         else:

@@ -172,7 +172,7 @@ class YtOauthLL(commands.Cog):
             raise GenericError(view.exception_txt)
 
         if not (refresh_token:=view.data.get('refresh_token')):
-            raise GenericError("**Time to link the Google account has expired!**")
+            raise GenericError("**The time limit for linking the Google account has expired!**")
 
         async with self.bot.session.get(
                 'https://www.googleapis.com/oauth2/v3/userinfo',
