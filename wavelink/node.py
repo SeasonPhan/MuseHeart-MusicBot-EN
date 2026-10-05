@@ -62,11 +62,11 @@ class Node:
     port: int
         The port the node is connected to.
     rest_uri: str
-        The rest server address the node is connecte to.
+        The rest server address the node is connected to.
     region: str
         The region provided to the node on connection.
     identifier: str
-        The unique indentifier associated with the node.
+        The unique identifier associated with the node.
     """
 
     def __init__(self, host: str,
@@ -205,7 +205,7 @@ class Node:
             self.update_info(info)
 
         else:
-            print(f"📶 - {self._client.bot.user} - Starting music server: {self.identifier}")
+            print(f"📶 - {self._client.bot.user} - Connecting to music server: {self.identifier}")
             while not self._client.bot.is_closed():
                 try:
                     async with self._client.bot.session.get(f"{self.rest_uri}/v4/info", timeout=45, headers={'Authorization': self.password}) as r:
@@ -333,7 +333,7 @@ class Node:
             The query to use to search for tracks. If a valid URL is not provided, it's best to default to
             "ytsearch:query", which allows the REST server to search YouTube for Tracks.
         retry_on_failure: bool
-            Bool indicating whether the Node should retry upto a maximum of 5 attempts on load failure.
+            Bool indicating whether the Node should retry up to a maximum of 5 attempts on load failure.
             If this is set to True, the Node will attempt to retrieve tracks with an exponential backoff delay
             between retries. Defaults to True.
 
@@ -429,7 +429,7 @@ class Node:
             try:
                 error = f"There was an error of severity '{new_data['exception']['severity']}' while loading tracks.\n\n{new_data['exception']['message']}"
             except KeyError:
-                error = f"There was an error of severity '{new_data['exception']['severity']}:\n{new_data['exception']['error']}"
+                error = f"There was an error of severity '{new_data['exception']['severity']}':\n{new_data['exception']['error']}"
             e = TrackLoadError(error=error, node=self, data=new_data)
 
             if not e.message:
@@ -574,7 +574,7 @@ class Node:
 
             if not resp.status == 200:
                 raise BuildTrackError(f'Failed to build track. Status: {data["status"]}, Error: {data["error"]}.'
-                                      f'Check the identifier is correct and try again.')
+                                      f' Check the identifier is correct and try again.')
 
             track = Track(id_=identifier, info=data)
             return track
@@ -651,7 +651,7 @@ class Node:
         self.hook = func
 
     async def destroy(self, *, force: bool = False) -> None:
-        """Destroy the node and all it's players."""
+        """Destroy the node and all its players."""
         self._closing = True
         players = self.players.copy()
 

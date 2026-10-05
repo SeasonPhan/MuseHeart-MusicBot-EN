@@ -412,7 +412,7 @@ class MusicSettings(commands.Cog):
         if isinstance(target, disnake.ForumChannel) and not isinstance(inter, CustomContext):
 
             await inter.response.send_modal(
-                title="Choose a name for the post (max 30 characters).",
+                title="Choose a post name (max 30 characters).",
                 custom_id=str(inter.id),
                 components=[
                     disnake.ui.TextInput(
@@ -570,7 +570,7 @@ class MusicSettings(commands.Cog):
                 embeds.append(
                     disnake.Embed(
                         description=f"The channel creation buttons have been disabled because the bot **{bot.user.mention}** "
-                                    "does not have the **manage channels** permission in the server..",
+                                    "does not have the **manage channels** permission in the server.",
                         color=color
                     )
                 )
@@ -788,7 +788,7 @@ class MusicSettings(commands.Cog):
                 if not target.permissions_for(guild.me).manage_threads:
                     raise GenericError(
                         f"**{bot.user.mention} does not have permission to manage threads in the channel {target.mention}.**\n"
-                        f"`Note: You can temporarily grant me this permission, and after using the command  "
+                        f"`Note: You can temporarily grant me this permission, and after using the command "
                         f"again, you can remove this permission.`")
 
                 """if not target.permissions_for(guild.me).create_forum_threads:
@@ -816,12 +816,12 @@ class MusicSettings(commands.Cog):
                 raise GenericError(f"**{guild.me.mention} does not have administrator permission or permission "
                                    f"to manage permissions for the channel {target.mention}** to edit "
                                    f"the necessary permissions for the music request system to work properly.\n\n"
-                                   f"If you do not wish to provide administrator permission or edit permissions"
+                                   f"If you do not wish to provide administrator permission or edit permissions "
                                    f"for the channel {target.mention} to allow me to manage channel permissions, you can use the "
                                    f"command without selecting a destination channel.")
 
             if not target.permissions_for(guild.me).read_messages:
-                raise GenericError(f"{bot.user.mention} has permission to read messages in the channel {target.mention}")
+                raise GenericError(f"{bot.user.mention} does not have permission to read messages in the channel {target.mention}")
 
             if purge_messages == "yes":
                 await target.purge(limit=100, check=lambda m: m.author != guild.me or not m.thread)
@@ -844,7 +844,7 @@ class MusicSettings(commands.Cog):
 
         channel = target
 
-        msg = f"{inter.author.mention}, The music request system was configured on the channel <#{channel.id}> via bot: {bot.user.mention}"
+        msg = f"{inter.author.mention}, the music request system was configured on the channel <#{channel.id}> via bot: {bot.user.mention}"
 
         if player and player.text_channel != target:
             if player.static:
@@ -923,7 +923,7 @@ class MusicSettings(commands.Cog):
     async def reset_legacy(self, ctx: CustomContext, *, delete_channel: str = None):
 
         if delete_channel == "--delete":
-            delete_channel = "sim"
+            delete_channel = "yes"
 
         await self.reset.callback(self=self, interaction=ctx, delete_channel=delete_channel)
 
@@ -951,7 +951,7 @@ class MusicSettings(commands.Cog):
         guild = bot.get_guild(inter.guild_id) or inter.guild
 
         if not guild.me.guild_permissions.manage_threads:
-            raise GenericError(f"I do not have **{perms_translations['manage_threads']}** permission in this server..")
+            raise GenericError(f"I do not have **{perms_translations['manage_threads']}** permission in this server.")
 
         channel_inter = bot.get_channel(inter.channel.id)
 
@@ -1014,7 +1014,7 @@ class MusicSettings(commands.Cog):
         await func(
             embed=disnake.Embed(
                 color=self.bot.get_color(guild.me),
-                description="**The Music Request channel was successfully reseted.**"
+                description="**The Music Request channel was successfully reset.**"
             ), components=[]
         )
 
@@ -1045,7 +1045,7 @@ class MusicSettings(commands.Cog):
         except Exception as e:
             traceback.print_exc()
             raise GenericError(
-                "**The channel of asking for music was reset of the database but an error occurred in the process:** "
+                "**The music request channel was reset in the database, but an error occurred in the process:** "
                 f"```py\n{repr(e)}```"
             )
 
@@ -1053,13 +1053,13 @@ class MusicSettings(commands.Cog):
     djrole_mc =commands.MaxConcurrency(1, per=commands.BucketType.guild, wait=False)
 
     @commands.has_guild_permissions(manage_guild=True)
-    @commands.command(name="adddjrole",description="Add a role to server's DJ list.",
+    @commands.command(name="adddjrole",description="Add a role to the server's DJ list.",
                       usage="{prefix}{cmd} [id|name|@role]\nEx: {prefix}{cmd} @role", cooldown=djrole_cd, max_concurrency=djrole_mc)
     async def add_dj_role_legacy(self, ctx: CustomContext, *, role: disnake.Role):
         await self.add_dj_role.callback(self=self, interaction=ctx, role=role)
 
     @commands.slash_command(
-        description=f"{desc_prefix}Add a role to server's DJ list.",
+        description=f"{desc_prefix}Add a role to the server's DJ list.",
         default_member_permissions=disnake.Permissions(manage_guild=True), cooldown=djrole_cd, max_concurrency=djrole_mc
     )
     @commands.contexts(guild=True)
@@ -1080,24 +1080,24 @@ class MusicSettings(commands.Cog):
         guild_data = await bot.get_data(inter.guild_id, db_name=DBModel.guilds)
 
         if str(role.id) in guild_data['djroles']:
-            await inter.send(f"The role {role.mention} is already in server's DJ list", ephemeral=True)
+            await inter.send(f"The role {role.mention} is already in the server's DJ list", ephemeral=True)
             return
 
         guild_data['djroles'].append(str(role.id))
 
         await bot.update_data(guild.id, guild_data, db_name=DBModel.guilds)
 
-        await inter.send(f"The role {role.mention} has been added to server's DJ list.", ephemeral=True)
+        await inter.send(f"The role {role.mention} has been added to the server's DJ list.", ephemeral=True)
 
     @commands.has_guild_permissions(manage_guild=True)
-    @commands.command(name="removedjrole", description="Remove a role from server's DJ list.",
+    @commands.command(name="removedjrole", description="Remove a role from the server's DJ list.",
                       usage="{prefix}{cmd} [id|name|@role]\nEx: {prefix}{cmd} @role",
                       cooldown=djrole_cd, max_concurrency=djrole_mc)
     async def remove_dj_role_legacy(self, ctx: CustomContext, *, role: disnake.Role):
         await self.remove_dj_role.callback(self=self, interaction=ctx, role=role)
 
     @commands.slash_command(
-        description=f"{desc_prefix}Remove a role from server's DJ list.",
+        description=f"{desc_prefix}Remove a role from the server's DJ list.",
         default_member_permissions=disnake.Permissions(manage_guild=True), cooldown=djrole_cd, max_concurrency=djrole_mc
     )
     @commands.contexts(guild=True)
@@ -1116,14 +1116,14 @@ class MusicSettings(commands.Cog):
 
         if not guild_data['djroles']:
 
-            await inter.send("There are no roles in server's DJ list.", ephemeral=True)
+            await inter.send("There are no roles in the server's DJ list.", ephemeral=True)
             return
 
         guild = bot.get_guild(inter.guild_id) or inter.guild
         role = guild.get_role(role.id)
 
         if str(role.id) not in guild_data['djroles']:
-            await inter.send(f"The role {role.mention} is not in server's DJ list\n\n" + "Roles:\n" +
+            await inter.send(f"The role {role.mention} is not in the server's DJ list\n\n" + "Roles:\n" +
                                               " ".join(f"<#{r}>" for r in guild_data['djroles']), ephemeral=True)
             return
 
@@ -1131,7 +1131,7 @@ class MusicSettings(commands.Cog):
 
         await bot.update_data(guild.id, guild_data, db_name=DBModel.guilds)
 
-        await inter.send(f"The role {role.mention} has been removed from server's DJ list.", ephemeral=True)
+        await inter.send(f"The role {role.mention} has been removed from the server's DJ list.", ephemeral=True)
 
     skin_cd = commands.CooldownMapping.from_cooldown(1, 20, commands.BucketType.guild)
     skin_mc =commands.MaxConcurrency(1, per=commands.BucketType.member, wait=False)
@@ -1285,7 +1285,7 @@ class MusicSettings(commands.Cog):
                     changed_skins_txt += f"Song Request: `{select_view.static_skin_selected.replace('> custom_skin: ', '[custom skin]: ')}`\n"
 
         if global_mode != select_view.global_mode:
-            changed_skins_txt += "Skin Global: `" + ("Activated" if select_view.global_mode else "Disabled") + "`\n"
+            changed_skins_txt += "Global Skin: `" + ("Activated" if select_view.global_mode else "Disabled") + "`\n"
 
         if not changed_skins_txt:
             txt = "**There were no changes in skin settings...**"
@@ -1385,7 +1385,7 @@ class MusicSettings(commands.Cog):
                             f"I do not recommend proceeding to avoid giving permanent access to the member using the button "
                             f"or to avoid permission issues, etc."
             ).set_image(url="https://cdn.discordapp.com/attachments/554468640942981147/1108943648508366868/image.png").
-            set_footer(text="Note: Create an invitation without limitations such as expiration dates, usage limits, or  "
+            set_footer(text="Note: Create an invitation without limitations such as expiration dates, usage limits, or "
                             "exclusivity for a single user."),
             components=[disnake.ui.Button(label="Send invite", custom_id=f"listen_along_{ctx.author.id}")],
             fail_if_not_exists=False
@@ -1441,10 +1441,10 @@ class MusicSettings(commands.Cog):
             return await inter.edit_original_message("Invalid link or the invitation does not exist/expired")
 
         if invite.max_uses:
-            return await inter.edit_original_message("The invitation can have a maximum amount of uses")
+            return await inter.edit_original_message("The invitation cannot have a maximum number of uses.")
 
         if invite.target_user:
-            return await inter.edit_original_message("The invitation cannot be configured for only 1 user use.")
+            return await inter.edit_original_message("The invitation cannot be restricted to a single user.")
 
         channel = None
 
@@ -1461,14 +1461,14 @@ class MusicSettings(commands.Cog):
             break
 
         if not channel:
-            return await inter.edit_original_message("**There are no compatible bots added to the informed invite server.**")
+            return await inter.edit_original_message("**There are no compatible bots added to the server of the provided invite.**")
 
         global_data = await self.bot.get_global_data(inter.guild_id, db_name=DBModel.guilds)
 
         if len(global_data["listen_along_invites"]) > 4:
             return await inter.edit_original_message(
                 embed=disnake.Embed(
-                    description="**Invite limit exceeded on the current server,  Please delete at least one of the invites "
+                    description="**Invite limit exceeded on the current server. Please delete at least one of the invites "
                                 "below from the server:** ```ansi\n" +
                                 ", ".join(f"[31;1m{c}[0m" for c in global_data["listen_along_invites"]) + "```",
                     color=self.bot.get_color()
@@ -1482,7 +1482,7 @@ class MusicSettings(commands.Cog):
         await inter.edit_original_message(
             f"**The link {invite} has been successfully activated/updated to be sent via RPC "
             f"when there's an active player in the channel {inter.author.voice.channel.mention}.**\n"
-            f"`Note: If you want to display it on your status and do not have the RPC app,use the /rich_presence command "
+            f"`Note: If you want to display it on your status and do not have the RPC app, use the /rich_presence command "
             f"for more information.`"
         )
 
@@ -1688,7 +1688,7 @@ class MusicSettings(commands.Cog):
                 description="### Placeholders for custom skins:\n```ansi\n"
                             "[34;1m{track.title}[0m -> Song title\n"
                             "[34;1m{track.title_25}[0m -> Song title (up to 25 characters)\n"
-                            "[34;1m{track.title_42}[0m -> Song title (up to 48 characters)\n"
+                            "[34;1m{track.title_42}[0m -> Song title (up to 42 characters)\n"
                             "[34;1m{track.title_58}[0m -> Song title (up to 58 characters)\n"
                             "[34;1m{track.url}[0m -> Song link\n"
                             "[34;1m{track.author}[0m -> Uploader/Artist name\n"
@@ -1714,7 +1714,7 @@ class MusicSettings(commands.Cog):
                             "[34;1m{guild.id}[0m -> Server ID\n"
                             "[34;1m{queue_format}[0m -> Pre-formatted queue songs (use the placeholder setup button "
                             "to change the style)\n"
-                            "[34;1m{track.number}[0m -> Position number of the song in the queue (functional with "
+                            "[34;1m{track.number}[0m -> Position number of the song in the queue (works with "
                             "the placeholder: [31;1m{queue_format}[0m)```"
             )
         )
@@ -1840,7 +1840,7 @@ class RPCCog(commands.Cog):
             description="**Mini-guide to use the app to display the music you're listening to via RPC:\n\n"
                         "Download the app (musicbot_rpc.zip) "
                         "[here](https://github.com/zRitsu/Discord-MusicBot-RPC/releases).\n\n"
-                        "Extract the musicbot_rpc.zip and in the folder, open the musicbot_rpc." \
+                        "Extract the musicbot_rpc.zip and in the folder, open the musicbot_rpc. " \
                         "Add the websocket link below in the app (tab: Socket Settings):** ```ansi\n" \
                         f"{(self.bot.config['RPC_PUBLIC_URL'] or self.bot.config['RPC_SERVER']).replace('$PORT', os.environ.get('PORT', '80'))}```"
         )
@@ -1851,7 +1851,7 @@ class RPCCog(commands.Cog):
         if self.bot.config["ENABLE_RPC_AUTH"]:
 
             embed.description += "\n**You'll need to create/generate/import a token to unlock RPC access " \
-                                 "(Check the buttons below), , copy the token, and in the app (Tab: Socket Settings) " \
+                                 "(Check the buttons below), copy the token, and in the app (Tab: Socket Settings) " \
                                  "click the \"Paste Token\" button**"
 
             components.extend(
@@ -1865,7 +1865,7 @@ class RPCCog(commands.Cog):
                 ]
             )
 
-        embed.description += "\n\n**Now simply click the \"Start Presence\"  button and listen to music " \
+        embed.description += "\n\n**Now simply click the \"Start Presence\" button and listen to music " \
                              "through a compatible bot.**"
 
         embed.set_author(
@@ -1893,7 +1893,7 @@ class RPCCog(commands.Cog):
         button_id, user_id = inter.data.custom_id.split(".")
 
         if user_id != str(inter.author.id):
-            await inter.send(f"Only <@{user_id}> You can use the message buttons!", ephemeral=True)
+            await inter.send(f"Only <@{user_id}> can use the message buttons!", ephemeral=True)
             return
 
         if button_id == "rpc_gen":
@@ -1929,7 +1929,7 @@ class RPCCog(commands.Cog):
                     disnake.ui.TextInput(
                         style=disnake.TextInputStyle.short,
                         label="Paste the token in the field below:",
-                        placeholder="NOTE: For safety measure, never include a personal password here!",
+                        placeholder="NOTE: As a safety measure, never include a personal password here!",
                         custom_id="token_input",
                         min_length=50,
                         max_length=50,
@@ -1955,7 +1955,7 @@ class RPCCog(commands.Cog):
             data["token"] = ""
             await self.bot.update_global_data(id_=user_id, data=data, db_name=DBModel.users)
             msg = "The token was successfully removed!\n" \
-                  "Now the RPC system will be disabled on its user."
+                  "Now the RPC system will be disabled for your user."
 
         else: # button_id == "rpc_close"
             await inter.message.delete()

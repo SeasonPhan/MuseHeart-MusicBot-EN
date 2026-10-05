@@ -68,7 +68,7 @@ def replaces(
             replace('{track.thumb}', player.current.thumb). \
             replace('{playlist.name}', player.current.playlist_name or "No playlist"). \
             replace('{playlist.url}', player.current.playlist_url or player.controller_link). \
-            replace('{player.loop.mode}', 'Disabled' if not player.loop else 'Current music' if player.loop == "current" else "Queue"). \
+            replace('{player.loop.mode}', 'Disabled' if not player.loop else 'Current song' if player.loop == "current" else "Queue"). \
             replace('{player.queue.size}', str(len(player.queue or player.queue_autoplay))). \
             replace('{player.volume}', str(player.volume)). \
             replace('{player.autoplay}', "Enabled" if player.autoplay else "Disabled"). \
@@ -107,7 +107,7 @@ def replaces(
             replace('{track.thumb}', "https://img.youtube.com/vi/2vFA0HL9kTk/mqdefault.jpg"). \
             replace('{playlist.name}', "🎵 DV 🎶"). \
             replace('{playlist.url}', "https://www.youtube.com/playlist?list=PLKlXSJdWVVAD3iztmL2vFVrwA81sRkV7n"). \
-            replace('{player.loop.mode}', "Current Music"). \
+            replace('{player.loop.mode}', "Current Song"). \
             replace('{player.queue.size}', f"{queue_max_entries}"). \
             replace('{player.volume}', "100"). \
             replace('{player.autoplay}', "Enabled"). \

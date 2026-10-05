@@ -270,7 +270,7 @@ class SpotifyClient:
             if [n for n in bot.music.nodes.values() if "spotify" in n.info.get("sourceManagers", [])]:
                 return
 
-            raise GenericError("**The support for Spotify links is temporarily disabled.**")
+            raise GenericError("**Support for Spotify links is temporarily disabled.**")
 
         url_type, url_id = matches.groups()
 

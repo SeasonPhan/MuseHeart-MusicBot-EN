@@ -218,7 +218,7 @@ class DefaultProgressbarSkin:
                     disnake.SelectOption(
                         label=("Disable" if player.restrict_mode else "Enable") + " restricted mode", emoji="🔐",
                         value=PlayerControls.restrict_mode,
-                        description="Only DJ's/Staff can use restricted commands."
+                        description="Only DJs/Staff can use restricted commands."
                     ),
                 ]
             ),
@@ -229,7 +229,7 @@ class DefaultProgressbarSkin:
                 disnake.SelectOption(
                     label= "View lyrics", emoji="📃",
                     value=PlayerControls.lyrics,
-                    description="Get lyrics of current music."
+                    description="Get the lyrics of the current song."
                 )
             )
 

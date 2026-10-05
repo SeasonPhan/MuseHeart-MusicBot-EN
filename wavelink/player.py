@@ -107,7 +107,7 @@ class Track:
     author: Optional[str]
         The author of the track. Could be None
     is_stream: bool
-        Indicated whether the track is a stream or not.
+        Indicates whether the track is a stream or not.
     thumb: Optional[str]
         The thumbnail URL associated with the track. Could be None.
     """

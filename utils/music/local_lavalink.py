@@ -47,9 +47,9 @@ def download_file(url, filename):
                         speed_txt = "MB/s"
                     else:
                         speed_txt = "KB/s"
-                    print(f"Download for file {filename} {current_progress}% completed ({download_speed:.2f} {speed_txt} / {total_txt})")
+                    print(f"Download of file {filename}: {current_progress}% completed ({download_speed:.2f} {speed_txt} / {total_txt})")
                 except:
-                    print(f"Download for file {filename} {current_progress}% completed")
+                    print(f"Download of file {filename}: {current_progress}% completed")
 
     r.close()
 
@@ -264,7 +264,7 @@ def run_lavalink(
     lavalink_process = subprocess.Popen(java_cmd.split(), stdout=subprocess.DEVNULL)
 
     if lavalink_additional_sleep:
-        print(f"🕙 - Wait {lavalink_additional_sleep} seconds...")
+        print(f"🕙 - Waiting {lavalink_additional_sleep} seconds...")
         time.sleep(lavalink_additional_sleep)
 
     return lavalink_process

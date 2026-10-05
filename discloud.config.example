@@ -3,9 +3,9 @@
 ################################################################
 
 #################################################################################################################
-### Attention: You can adjust the RAM according to the contracted plan (or desired amount).                   ###
+### Attention: You can adjust the RAM according to the subscribed plan (or desired amount).                   ###
 ### If you use a paid plan that provides a minimum of 512MB + 0.5vcpu, it's recommended to edit the .env file ###
-### and changing the value of AUTO_DOWNLOAD_LAVALINK_SERVERLIST from true to false                            ###
+### and change the value of AUTO_DOWNLOAD_LAVALINK_SERVERLIST from true to false                              ###
 ###                                                                                                           ###
 ### If desired, you can also change the NAME and AVATAR link.                                                 ###
 #################################################################################################################

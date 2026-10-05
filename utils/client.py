@@ -257,7 +257,7 @@ class BotPool:
 
                 print(
                     "Application being rate-limited by discord!\n"
-                    "Finishing/restarting the process in 5 seconds..."
+                    "Terminating/restarting the process in 5 seconds..."
                 )
 
                 self.killing_state = True
@@ -287,7 +287,7 @@ class BotPool:
 
             elif isinstance(e, disnake.LoginFailure) and "Improper token" in str(e):
                 e = "An invalid token was used.<br>" \
-                    "Review if the provided token is correct<br>" \
+                    "Check if the provided token is correct<br>" \
                     "or if the token has been reset<br>" \
                     "or copied from the correct location (e.g., https://i.imgur.com/k894c1q.png)<br>" \
                     "After fixing, restart the application."
@@ -722,7 +722,7 @@ class BotPool:
                 pass
 
             if not token:
-                print(f"{bot_name} Ignored (uninfined token)...")
+                print(f"{bot_name} ignored (undefined token)...")
                 return
 
             try:
@@ -934,14 +934,14 @@ class BotPool:
             message = "The bot token has not been properly configured!"
 
             if os.environ.get("REPL_SLUG"):
-                message += f"Check if the token has been added to the Replit secrets."
+                message += f" Check if the token has been added to the Replit secrets."
 
-                print(message + ": Guide on how to configure: https://gist.github.com/zRitsu/70737984cbe163f890dae05a80a3ddbe#2---com-o-projeto-j%C3%A1-criado-prossiga-as-etapas-abaixo")
+                print(message + " Guide on how to configure: https://gist.github.com/zRitsu/70737984cbe163f890dae05a80a3ddbe#2---com-o-projeto-j%C3%A1-criado-prossiga-as-etapas-abaixo")
 
-                message += f'. <a href="https://gist.github.com/zRitsu/70737984cbe163f890dae05a80a3ddbe#2---com-o-projeto-j%C3%A1-criado-prossiga-as-etapas-abaixo" target="_blank">Click here</a> to view the guide on how to configure.'
+                message += f' <a href="https://gist.github.com/zRitsu/70737984cbe163f890dae05a80a3ddbe#2---com-o-projeto-j%C3%A1-criado-prossiga-as-etapas-abaixo" target="_blank">Click here</a> to view the guide on how to configure.'
 
             else:
-                message += "Check if the token has been configured in ENV/ENVIRONMENT or in the .env file."
+                message += " Check if the token has been configured in ENV/ENVIRONMENT or in the .env file."
 
                 print(f"⚠️ - {message}")
 
@@ -1016,7 +1016,7 @@ class BotCore(commands.AutoShardedBot):
             try:
                 self.env_owner_ids.add(int(i))
             except ValueError:
-                print(f"Owner_ID invalid {i}")
+                print(f"Invalid Owner_ID: {i}")
 
     async def edit_voice_channel_status(
             self, status: Optional[str], *, channel_id: int, reason: Optional[str] = None
@@ -1357,21 +1357,21 @@ class BotCore(commands.AutoShardedBot):
                 if not [dev for dev in owners if check_member(dev, guild)]:
                     guilds.add(guild)
 
-            warn_msg = f"Attention: Bot [{self.user}] (ID: {self.user.id}) as been configured in the developer portal " \
+            warn_msg = f"Attention: Bot [{self.user}] (ID: {self.user.id}) has been configured in the developer portal " \
                   "as a public bot\n" \
-                  "remember that if the bot is released to be added publicly, it will have to " \
+                  "Remember that if the bot is made available to be added publicly, it will have to " \
                   "be under the conditions of the GPL-2 license: " \
                   "https://github.com/zRitsu/MuseHeart-MusicBot/blob/main/LICENSE\n" \
                   "If you do not want to follow the license conditions in your bot, you can make the bot private by unchecking the " \
                   f"public bot option by accessing the link: https://discord.com/developers/applications/{self.user.id}/bot"
 
             if guilds:
-                warn_msg += "\n\nCurrently the bot is located on servers where the bot owner (or team member) does not "\
-                            f"have permission to manage the server to add their own bot " \
-                             f"[{self.user}] in the servers below:\n\n" + "\n".join(f"{g.name} [ID: {g.id}]" for g in list(guilds)[:10])
+                warn_msg += "\n\nThe bot is currently in servers where the bot owner (or a team member) is not present or does not "\
+                            f"have the manage server permission needed to add their own bot " \
+                             f"[{self.user}]. Servers:\n\n" + "\n".join(f"{g.name} [ID: {g.id}]" for g in list(guilds)[:10])
 
                 if (gcount:=len(guilds)) > 10:
-                    warn_msg += F"\nand in {gcount-10} more server (s)."
+                    warn_msg += F"\nand in {gcount-10} more server(s)."
 
             print(("="*50) + f"\n{warn_msg}\n" + ("="*50))
 
@@ -1450,7 +1450,7 @@ class BotCore(commands.AutoShardedBot):
 
         for c in self.slash_commands:
             if (desc:=len(c.description)) > 100:
-                raise Exception(f"The command description {c.name} exceeded the allowed number of characters "
-                                f"discord limit(100), current length: {desc}")
+                raise Exception(f"The description of command {c.name} exceeded the Discord character "
+                                f"limit (100), current length: {desc}")
 
         return load_status

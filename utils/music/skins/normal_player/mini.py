@@ -125,7 +125,7 @@ class MiniSkin:
                     disnake.SelectOption(
                         label="Play from start", emoji="⏪",
                         value=PlayerControls.seek_to_start,
-                        description="Move the current song's time to the start."
+                        description="Go back to the beginning of the current song."
                     ),
                     disnake.SelectOption(
                         label=f"Volume: {player.volume}%", emoji="🔊",
@@ -176,7 +176,7 @@ class MiniSkin:
                 disnake.SelectOption(
                     label= "View lyrics", emoji="📃",
                     value=PlayerControls.lyrics,
-                    description="Get lyrics of current music."
+                    description="Get the lyrics of the current song."
                 )
             )
 

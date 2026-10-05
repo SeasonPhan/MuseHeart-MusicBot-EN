@@ -91,7 +91,7 @@ DEFAULT_CONFIG = {
     "ENABLE_RPC_AUTH": False,
 
     #############################################
-    ### Music System - Local Lavalink Stuffs: ###
+    ### Music System - Local Lavalink Stuff:  ###
     #############################################
     "RUN_LOCAL_LAVALINK": False,
     "CONNECT_LOCAL_LAVALINK": True,

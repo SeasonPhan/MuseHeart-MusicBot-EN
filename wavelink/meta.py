@@ -10,7 +10,7 @@ class WavelinkMixin:
     """Wavelink Mixin class.
 
     .. warning::
-        You must use this class in conjuction with a discord.py `commands.Cog`.
+        You must use this class in conjunction with a discord.py `commands.Cog`.
 
     Example
     ---------
@@ -56,7 +56,7 @@ class WavelinkMixin:
         listener:
             The listener where an exception was raised.
         error: Exception
-            The excpetion raised when dispatching a mixin listener.
+            The exception raised when dispatching a mixin listener.
         """
         print(f'Ignoring exception in listener {listener}:', file=sys.stderr)
         traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
@@ -143,7 +143,7 @@ class WavelinkMixin:
 
                 @wavelink.WavelinkMixin.listener(event="on_node_ready")
                 async def node_ready_event(node):
-                    print(f'Node {node.indentifier} ready!')
+                    print(f'Node {node.identifier} ready!')
 
         Raises
         --------

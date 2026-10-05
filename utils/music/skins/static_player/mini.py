@@ -222,7 +222,7 @@ class MiniStaticSkin:
                     disnake.SelectOption(
                         label=("Disable" if player.nightcore else "Enable") + " nightcore effect", emoji="🇳",
                         value=PlayerControls.nightcore,
-                        description="Effect that increases speed and pitch of the music."
+                        description="Effect that increases speed and pitch of the song."
                     ),
                     disnake.SelectOption(
                         label=("Disable" if player.autoplay else "Enable") + " autoplay", emoji="🔄",
@@ -237,7 +237,7 @@ class MiniStaticSkin:
                     disnake.SelectOption(
                         label=("Disable" if player.restrict_mode else "Enable") + " restricted mode", emoji="🔐",
                         value=PlayerControls.restrict_mode,
-                        description="Only DJ/Staff can use restricted commands."
+                        description="Only DJs/Staff can use restricted commands."
                     ),
                 ]
             ),
@@ -264,7 +264,7 @@ class MiniStaticSkin:
                 disnake.SelectOption(
                     label= "View lyrics", emoji="📃",
                     value=PlayerControls.lyrics,
-                    description="Get lyrics of current music."
+                    description="Get the lyrics of the current song."
                 )
             )
 

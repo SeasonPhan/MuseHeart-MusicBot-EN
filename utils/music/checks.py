@@ -332,7 +332,7 @@ async def check_pool_bots(inter, only_voiced: bool = False, check_player: bool =
     else:
 
         if bot_missing_perms:
-            msg = f"**There are music bots available on the server, but they don't have permission to send messages in the channel. <#{inter.channel_id}>**:\n\n" + \
+            msg = f"**There are music bots available on the server, but they don't have permission to send messages in the channel <#{inter.channel_id}>**:\n\n" + \
                 ", ".join(b.user.mention for b in bot_missing_perms)
         else:
             msg = "**All bots are currently in use...**\n\n**You can connect to one of the channels below where active sessions are taking place:**\n" + ", ".join(voice_channels)
@@ -555,7 +555,7 @@ def check_stage_topic():
         if player.stage_title_event and (time_:=int((disnake.utils.utcnow() - player.start_time).total_seconds())) < time_limit and not (await bot.is_owner(inter.author)):
             raise GenericError(
                 f"**You'll have to wait {time_format((time_limit - time_) * 1000, use_names=True)} to use this function "
-                f"with the active stage automatic announcement...**"
+                f"while the automatic stage announcement is active...**"
             )
 
         return True
@@ -624,16 +624,16 @@ def get_available_bots_info(pool: BotPool, guild_id: int, member: disnake.Member
     components = []
 
     if available_bots:
-        txts.append(f"You can use another{(s:='s'[:(abcount:=len(available_bots))^1])} available music bot{s} on the server to use in another voice channel: " + " ".join(available_bots))
+        txts.append(f"You can use the other available music bot{(s:='s'[:(abcount:=len(available_bots))^1])} on the server in another voice channel: " + " ".join(available_bots))
     else:
         t = ""
         if voice_channels:
             t += f"You can join one of the channels with active sessions on the server: " + " ".join(voice_channels)
         if extra_bot_counter:
-            t += "\n\n" + ("Or if you prefer, you can" if t else "You can")
+            t += "\n\n" + ("Or if you prefer, you can " if t else "You can ")
             if not member.guild_permissions.manage_guild:
-                t += "ask a server administrator "
-            t += "to add more music bots by clicking the button below."
+                t += "ask a server administrator to "
+            t += "add more music bots by clicking the button below."
 
             components = [disnake.ui.Button(custom_id="bot_invite", label="Add more music bots by clicking here")]
 
