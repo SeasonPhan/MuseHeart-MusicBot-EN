@@ -282,10 +282,10 @@ class Owner(commands.Cog):
         txt = ""
 
         if loaded := data["loaded"] + data["reloaded"]:
-            txt += f'**Loaded/Reloaded modules:** ```ansi\n [0;34m{"  [0;37m|  [0;34m".join(loaded)}```\n'
+            txt += f'**Loaded/Reloaded modules:** ```ansi\n[0;34m{" [0;37m| [0;34m".join(loaded)}```\n'
 
         if data["failed"]:
-            txt += f'**Modules that failed:** ```ansi\n [0;31m{"  [0;37m|  [0;31m".join(data["failed"])}```\n'
+            txt += f'**Modules that failed:** ```ansi\n[0;31m{" [0;37m| [0;31m".join(data["failed"])}```\n'
 
         if not txt:
             raise GenericError("**No module found...**")
