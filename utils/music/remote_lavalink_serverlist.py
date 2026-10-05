@@ -1,4 +1,4 @@
-# pip install requests ou adicione requests no requirements.txt (caso não tenha, crie esse arquivo com o nome requests nele).
+# pip install requests or add requests to requirements.txt (if you don't have one, create this file with the name requests in it).
 import re
 import traceback
 from configparser import ConfigParser

@@ -66,7 +66,7 @@ def replaces(
             data=txt
         ). \
             replace('{track.thumb}', player.current.thumb). \
-            replace('{playlist.name}', player.current.playlist_name or "Sem playlist"). \
+            replace('{playlist.name}', player.current.playlist_name or "No playlist"). \
             replace('{playlist.url}', player.current.playlist_url or player.controller_link). \
             replace('{player.loop.mode}', 'Disabled' if not player.loop else 'Current music' if player.loop == "current" else "Queue"). \
             replace('{player.queue.size}', str(len(player.queue or player.queue_autoplay))). \

@@ -227,7 +227,7 @@ def load_config():
         except ValueError as e:
             raise Exception(f"You used an invalid configuration! {i}: {CONFIG[i]}\n{repr(e)}")
 
-    # converter strings que requer valor bool/nulo.
+    # convert strings that require a bool/null value.
     for i in [
         "AUTO_SYNC_COMMANDS",
         "INTERACTION_COMMAND_ONLY",

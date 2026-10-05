@@ -184,7 +184,7 @@ class PartialTrack:
 
     @property
     def author(self) -> str:
-        return self.info["author"] or "Artista Desconhecido"
+        return self.info["author"] or "Unknown Artist"
 
     @property
     def authors_string(self) -> str:
@@ -794,7 +794,7 @@ class LavalinkPlayer(wavelink.Player):
                 try:
                     can_connect(vc, self.guild, bot=self.bot)
                 except (GenericError, PoolException) as e:
-                    self.set_command_log(f"Ocorreu uma falha ao reconectar o player no canal de voz: {e}.", controller=True)
+                    self.set_command_log(f"Failed to reconnect the player to the voice channel: {e}.", controller=True)
                     self.update = True
                 except Exception as e:
                     self.set_command_log(f"A failure occurred while reconnecting the player to the voice channel: {repr(e)}.", controller=True)
@@ -2156,7 +2156,7 @@ class LavalinkPlayer(wavelink.Player):
 
             cog = self.bot.get_cog("ErrorHandler")
             if cog:
-                embed.add_field(name="Servidor:", value=f"{self.guild.name} [{self.guild.id}]")
+                embed.add_field(name="Server:", value=f"{self.guild.name} [{self.guild.id}]")
                 try:
                     await cog.send_webhook(
                         embed=embed,

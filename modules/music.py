@@ -1058,7 +1058,7 @@ class Music(commands.Cog):
             menu = "favs"
             for k, v in user_data["fav_links"].items():
                 emoji, platform = music_source_emoji_url(v)
-                fav_opts.append({"url": v, "option": disnake.SelectOption(label=fix_characters(k, 45), value=f"> fav: {k}", description=f"[⭐ Favorito ⭐] -> {platform}", emoji=emoji)})
+                fav_opts.append({"url": v, "option": disnake.SelectOption(label=fix_characters(k, 45), value=f"> fav: {k}", description=f"[⭐ Favorite ⭐] -> {platform}", emoji=emoji)})
 
         elif query.startswith(">> [📑 Recent songs 📑] <<"):
 
@@ -5638,7 +5638,7 @@ class Music(commands.Cog):
 
                     modal_components.append(
                         disnake.ui.Label(
-                            text="⭐⠂Favoritos:",
+                            text="⭐⠂Favorites:",
                             component=disnake.ui.StringSelect(
                                 options=fav_opts, required=False, min_values=0, custom_id="fav_links"
                             )
@@ -7303,7 +7303,7 @@ class Music(commands.Cog):
                     exceptions.add(repr(e))
 
                     if not isinstance(e, wavelink.TrackNotFound):
-                        print(f"Falha ao processar busca...\n{query}\n{traceback.format_exc()}")
+                        print(f"Failed to process search...\n{query}\n{traceback.format_exc()}")
                         node_retry = True
                     elif not isinstance(e, GenericError):
                         self.bot.dispatch("custom_error", ctx=ctx, error=e)
@@ -7495,7 +7495,7 @@ class Music(commands.Cog):
                 return
 
         if member.bot:
-            # ignorar outros bots
+            # ignore other bots
             if player.bot.user.id == member.id and not after.channel:
 
                 await asyncio.sleep(3)
