@@ -1,4 +1,4 @@
-# Credits: Devoxin (lavalink.py)
+# Créditos: Devoxin (lavalink.py)
 # https://github.com/devoxin/Lavalink.py/blob/development/lavalink/utils.py
 
 import struct

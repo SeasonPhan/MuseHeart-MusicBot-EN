@@ -62,11 +62,11 @@ class Node:
     port: int
         The port the node is connected to.
     rest_uri: str
-        The rest server address the node is connected to.
+        The rest server address the node is connecte to.
     region: str
         The region provided to the node on connection.
     identifier: str
-        The unique identifier associated with the node.
+        The unique indentifier associated with the node.
     """
 
     def __init__(self, host: str,
@@ -333,7 +333,7 @@ class Node:
             The query to use to search for tracks. If a valid URL is not provided, it's best to default to
             "ytsearch:query", which allows the REST server to search YouTube for Tracks.
         retry_on_failure: bool
-            Bool indicating whether the Node should retry up to a maximum of 5 attempts on load failure.
+            Bool indicating whether the Node should retry upto a maximum of 5 attempts on load failure.
             If this is set to True, the Node will attempt to retrieve tracks with an exponential backoff delay
             between retries. Defaults to True.
 
@@ -651,7 +651,7 @@ class Node:
         self.hook = func
 
     async def destroy(self, *, force: bool = False) -> None:
-        """Destroy the node and all its players."""
+        """Destroy the node and all it's players."""
         self._closing = True
         players = self.players.copy()
 

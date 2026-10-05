@@ -7495,7 +7495,7 @@ class Music(commands.Cog):
                 return
 
         if member.bot:
-            # ignore other bots
+            # ignorar outros bots
             if player.bot.user.id == member.id and not after.channel:
 
                 await asyncio.sleep(3)

@@ -115,7 +115,7 @@ class Client:
             The query to use to search for tracks. If a valid URL is not provided, it's best to default to
             "ytsearch:query", which allows the REST server to search YouTube for Tracks.
         retry_on_failure: bool
-            Bool indicating whether the Node should retry up to a maximum of 5 attempts on load failure.
+            Bool indicating whether the Node should retry upto a maximum of 5 attempts on load failure.
             If this is set to True, the Node will attempt to retrieve tracks with an exponential backoff delay
             between retries. Defaults to True.
 
@@ -405,7 +405,7 @@ class Client:
         return node
 
     async def destroy_node(self, *, identifier: str) -> None:
-        """Destroy the node and its players.
+        """Destroy the node and it's players.
 
         Parameters
         ------------

@@ -120,7 +120,7 @@ class Equalizer:
     def piano(cls):
         """Piano Equalizer.
 
-        Suitable for Piano tracks, or tracks with an emphasis on Female Vocals.
+        Suitable for Piano tracks, or tacks with an emphasis on Female Vocals.
         Could also be used as a Bass Cutoff.
         """
         levels = [(0, -0.25), (1, -0.25), (2, -0.125), (3, 0.0),

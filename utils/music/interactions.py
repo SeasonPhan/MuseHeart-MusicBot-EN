@@ -1386,7 +1386,7 @@ class FavMenuView(disnake.ui.View):
 
             if self.data["fav_links"]:
                 opts = []
-                for k, v in list(self.data["fav_links"].items())[:25]: # TODO: Handle existing data that exceeds the allowed amount later
+                for k, v in list(self.data["fav_links"].items())[:25]: # TODO: Lidar depois com os dados existentes que excedem a quantidade permitida
                     emoji, platform = music_source_emoji_url(v)
                     opts.append(disnake.SelectOption(label=k, emoji=emoji, description=platform))
                 fav_select = disnake.ui.Select(options=opts, min_values=1, max_values=1)
@@ -1415,7 +1415,7 @@ class FavMenuView(disnake.ui.View):
                 fav_select = disnake.ui.Select(options=[
                     disnake.SelectOption(label=k, emoji=music_source_emoji_url(v['url'])[0],
                                          description=v.get("description")) for k, v in
-                    list(self.guild_data["player_controller"]["fav_links"].items())[:25] # TODO: Handle existing data that exceeds the allowed amount later
+                    list(self.guild_data["player_controller"]["fav_links"].items())[:25] # TODO: Lidar depois com os dados existentes que excedem a quantidade permitida
                 ], min_values=1, max_values=1)
                 fav_select.options[0].default = True
                 self.current = fav_select.options[0].label

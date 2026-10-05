@@ -91,7 +91,7 @@ DEFAULT_CONFIG = {
     "ENABLE_RPC_AUTH": False,
 
     #############################################
-    ### Music System - Local Lavalink Stuff:  ###
+    ### Music System - Local Lavalink Stuffs: ###
     #############################################
     "RUN_LOCAL_LAVALINK": False,
     "CONNECT_LOCAL_LAVALINK": True,
@@ -227,7 +227,7 @@ def load_config():
         except ValueError as e:
             raise Exception(f"You used an invalid configuration! {i}: {CONFIG[i]}\n{repr(e)}")
 
-    # convert strings that require a bool/null value.
+    # converter strings que requer valor bool/nulo.
     for i in [
         "AUTO_SYNC_COMMANDS",
         "INTERACTION_COMMAND_ONLY",

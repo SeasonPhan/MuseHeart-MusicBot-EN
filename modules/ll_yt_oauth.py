@@ -27,7 +27,7 @@ class YtOauthView(disnake.ui.View):
         self.bot = bot
         self.data = {}
 
-        # data obtained from the repository: https://github.com/lavalink-devs/youtube-source/blob/main/common/src/main/java/dev/lavalink/youtube/http/YoutubeOauth2Handler.java#L34
+        # dados obtidos no repositório: https://github.com/lavalink-devs/youtube-source/blob/main/common/src/main/java/dev/lavalink/youtube/http/YoutubeOauth2Handler.java#L34
         self.client_id = '861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com'
         self.client_secret = 'SboVhoG9s0rNafixCSGGKXAT'
 

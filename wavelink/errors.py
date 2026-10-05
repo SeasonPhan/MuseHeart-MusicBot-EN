@@ -39,7 +39,7 @@ class ZeroConnectedNodes(WavelinkException):
 
 
 class AuthorizationFailure(WavelinkException):
-    """Exception raised when an invalid password is provided to a node."""
+    """Exception raised when an invalid password is provided toa node."""
 
 
 class BuildTrackError(WavelinkException):

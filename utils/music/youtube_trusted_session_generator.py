@@ -1,4 +1,4 @@
-# original code obtained from the repository: https://github.com/iv-org/youtube-trusted-session-generator
+# código original obtido no repositório: https://github.com/iv-org/youtube-trusted-session-generator
 import asyncio
 import pprint
 import traceback

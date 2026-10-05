@@ -549,7 +549,7 @@ class LavalinkPlayer(wavelink.Player):
         self.lyric_task: Optional[asyncio.Task] = None
         self.listen_along_invite = kwargs.pop("listen_along_invite", "")
         self.message_updater_task: Optional[asyncio.Task] = None
-        # limit only for DJs and staff
+        # limit only for dj's and staff's
         self.restrict_mode = kwargs.pop('restrict_mode', False)
         self.ignore_np_once = False  # do not invoke player controller in certain situations
         self.allowed_mentions = disnake.AllowedMentions(users=False, everyone=False, roles=False)
@@ -2614,8 +2614,8 @@ class LavalinkPlayer(wavelink.Player):
             if data.get("components") is None:
 
                 # Warning: Do not modify the components below, prefer to copy one of the skins from the utils -> music -> skins folder
-                # and save it under another name (without accents, spaces, special characters) and modify it to your liking.
-                # If you want to set a custom skin as the default, add/modify the config DEFAULT_SKIN="yourskin"
+                # and leave it with another name (without accents, spaces, special characters) and modify them to your liking.
+                # If you want to leave a custom skin by default add/modify the config DEFAULT_SKIN="yourskin"
 
                 data["components"] = [
                     disnake.ui.Button(
@@ -3696,7 +3696,7 @@ class LavalinkPlayer(wavelink.Player):
         self.bot.dispatch("player_destroy", player=self)
 
     #######################
-    #### Filter Stuff #####
+    #### Filter Stuffs ####
     #######################
 
     async def seek(self, position: int = 0) -> None:

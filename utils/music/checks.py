@@ -388,7 +388,7 @@ def is_dj():
 def can_send_message_check():
 
     async def predicate(inter):
-        # adapt to check other bots
+        # adaptar pra checkar outros bots
 
         if not inter.guild:
 
@@ -402,7 +402,7 @@ def can_send_message_check():
         except:
             bot = inter.bot
 
-        # TODO: tempfix for forum channel (archived thread)
+        # TODO: tempfix para canal de forum (thread arquivada)
         if isinstance(inter.channel, disnake.PartialMessageable):
             try:
                 await inter.response.defer(ephemeral=True)
@@ -588,7 +588,7 @@ def check_yt_cooldown():
 def user_cooldown(rate: int, per: int):
     def custom_cooldown(inter: disnake.Interaction):
         # if (await inter.bot.is_owner(inter.author)):
-        #   return None  # no cooldown
+        #   return None  # sem cooldown
 
         return commands.Cooldown(rate, per)
 
